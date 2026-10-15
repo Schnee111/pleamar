@@ -1960,6 +1960,15 @@ pub struct Gpu {
     copies: std::cell::RefCell<Vec<(u64, u32, wgpu::Extent3d, bool)>>,
     #[cfg(target_os = "linux")]
     yuv: Option<crate::dmabuf::YuvToRgb>,
+    /// The buffers live windows are copied into on the card (`thumbnails.live`),
+    /// by the ticket the thumbnails service knows each by: made here, or
+    /// another render's read from its fd.
+    #[cfg(target_os = "linux")]
+    thumbs: std::collections::HashMap<u64, wgpu::Texture>,
+    #[cfg(target_os = "linux")]
+    fit: Option<crate::dmabuf::FitFrame>,
+    #[cfg(target_os = "linux")]
+    hash: Option<crate::dmabuf::HashFrame>,
     last_submission: std::cell::RefCell<Option<Sent>>,
     /// The layouts of the card's memory it can paint BGRA in, for a platform
     /// that lends its own textures (a monitor driven directly).
@@ -2119,7 +2128,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { _gl_instance: gl_instance, lens, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
+        let mut g = Gpu { _gl_instance: gl_instance, lens, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -2322,7 +2331,8 @@ impl Gpu {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            // Painted in too: a live window copied on the card is made small into it.
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let view = atlas.create_view(&Default::default());
@@ -2768,6 +2778,160 @@ impl Gpu {
             }
             (!formats.is_empty()).then_some((device, formats))
         }
+    }
+
+    /// The card's nodes, primary and render, as `dev_t`s: either is how a
+    /// compositor names the card it copies on.
+    #[cfg(target_os = "linux")]
+    fn drm_nodes(&self) -> Vec<u64> {
+        use ash::vk;
+        use wgpu::hal::api::Vulkan;
+        // SAFETY: only reading properties of the physical device wgpu uses.
+        unsafe {
+            let Some(hal) = self.adapter.as_hal::<Vulkan>() else { return Vec::new() };
+            let instance = hal.shared_instance().raw_instance();
+            let pd = hal.raw_physical_device();
+            let mut drm = vk::PhysicalDeviceDrmPropertiesEXT::default();
+            let mut props = vk::PhysicalDeviceProperties2::default().push_next(&mut drm);
+            instance.get_physical_device_properties2(pd, &mut props);
+            let mut nodes = Vec::new();
+            if drm.has_primary != 0 {
+                nodes.push(libc::makedev(drm.primary_major as u32, drm.primary_minor as u32));
+            }
+            if drm.has_render != 0 {
+                nodes.push(libc::makedev(drm.render_major as u32, drm.render_minor as u32));
+            }
+            nodes
+        }
+    }
+
+    /// Makes the buffers the thumbnails service asks for, a live window to be
+    /// copied into on the card, and hands it their fds; the reason when it
+    /// cannot, and the window goes on being copied in memory. Lets go of
+    /// those the service no longer has.
+    #[cfg(target_os = "linux")]
+    pub fn answer_thumbnail_wants(&mut self) {
+        use crate::platform::{thumbnail_cards, thumbnail_offer, thumbnail_wants, ThumbnailOffer};
+        for want in thumbnail_wants() {
+            let answer = (|| {
+                if !self.device.features().contains(wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF) {
+                    return Err("the card does not share its memory with the compositor".to_string());
+                }
+                if !self.drm_nodes().contains(&want.device) {
+                    return Err("the compositor copies on another card".to_string());
+                }
+                // With alpha if it can; a window without it is drawn opaque.
+                let mut last = "the compositor copies into no format the card reads".to_string();
+                for fourcc in [crate::dmabuf::ARGB, crate::dmabuf::XRGB] {
+                    let Some((_, mods)) = want.formats.iter().find(|(f, _)| *f == fourcc) else { continue };
+                    match crate::dmabuf::export_to_read(&self.device, want.size, mods) {
+                        Ok(e) => {
+                            self.thumbs.insert(want.ticket, e.texture);
+                            return Ok(ThumbnailOffer { fd: e.fd, fourcc, modifier: e.modifier, planes: e.planes });
+                        }
+                        Err(e) => last = e,
+                    }
+                }
+                Err(last)
+            })();
+            thumbnail_offer(want.ticket, answer);
+        }
+        if !self.thumbs.is_empty() {
+            let cards = thumbnail_cards();
+            self.thumbs.retain(|t, _| cards.contains(t));
+        }
+    }
+
+    /// Tells the thumbnails service, for each window it has just had copied
+    /// into a buffer made here, what that frame's pixels add up to: the same as
+    /// last time, and it is not a new picture. Read back at once, 8 bytes each,
+    /// so a still window costs a moment of the card and no round.
+    #[cfg(target_os = "linux")]
+    pub fn check_thumbnails(&mut self) {
+        use crate::platform::{thumbnail_checked, thumbnail_checks};
+        let mut checks = thumbnail_checks(|t| self.thumbs.contains_key(&t));
+        // Being filled again already: nothing to sum, and no answer it would be.
+        checks.retain(|t| {
+            let claimed = t.on.claim();
+            if !claimed {
+                thumbnail_checked(t.on.ticket, t.n, None);
+            }
+            claimed
+        });
+        if checks.is_empty() {
+            return;
+        }
+        let hash = self.hash.get_or_insert_with(|| crate::dmabuf::HashFrame::new(&self.device));
+        let step = (self.device.limits().min_storage_buffer_offset_alignment as u64).max(8);
+        let n = checks.len() as u64;
+        let sums = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: step * n, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let out = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 8 * n, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("live windows told apart") });
+        encoder.clear_buffer(&sums, 0, None);
+        for (i, t) in checks.iter().enumerate() {
+            hash.hash(&self.device, &mut encoder, &self.thumbs[&t.on.ticket], t.opaque, (&sums, step * i as u64));
+        }
+        for i in 0..n {
+            encoder.copy_buffer_to_buffer(&sums, step * i, &out, 8 * i, 8);
+        }
+        let index = self.queue.submit(Some(encoder.finish()));
+        // Released once the card has read them, not when the wait below ends.
+        let read: Vec<_> = checks.iter().map(|t| t.on.clone()).collect();
+        self.queue.on_submitted_work_done(move || read.iter().for_each(|on| on.release()));
+        out.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let done = self.device.poll(wgpu::PollType::Wait { submission_index: Some(index), timeout: Some(std::time::Duration::from_millis(50)) }).is_ok();
+        let data = done.then(|| out.slice(..).get_mapped_range().ok()).flatten();
+        for (i, t) in checks.into_iter().enumerate() {
+            // Not read in time: a new picture, as without the check.
+            let sum = data.as_ref().map(|d| u64::from_ne_bytes(d[i * 8..i * 8 + 8].try_into().unwrap()));
+            thumbnail_checked(t.on.ticket, t.n, sum);
+        }
+    }
+
+    /// Paints each live window copied on the card into its place in the atlas,
+    /// made small, and tells the service once the card has read it.
+    #[cfg(target_os = "linux")]
+    pub fn fit_thumbnails(&mut self, fits: &mut Vec<crate::text::Fit>) {
+        if fits.is_empty() {
+            return;
+        }
+        let fit = self.fit.get_or_insert_with(|| crate::dmabuf::FitFrame::new(&self.device, wgpu::TextureFormat::Rgba8Unorm));
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("live windows made small") });
+        let mut read = Vec::new();
+        for f in fits.drain(..) {
+            let Some(on) = f.frame.card.clone() else { continue };
+            // Being filled again: the service sends this window again once filled.
+            if !on.claim() {
+                on.skipped(f.frame.version);
+                continue;
+            }
+            if !self.thumbs.contains_key(&on.ticket) {
+                // Another render's: read from its fd.
+                let [(offset, stride)] = on.planes[..] else { continue };
+                let Ok(fd) = on.fd.try_clone() else { continue };
+                match Self::import_dmabuf(&self.device, fd, on.size, on.modifier, stride, offset, wgpu::TextureUses::RESOURCE, wgpu::TextureUsages::TEXTURE_BINDING, wgpu::TextureUses::RESOURCE) {
+                    Ok(t) => {
+                        self.thumbs.insert(on.ticket, t);
+                    }
+                    Err(_) => {
+                        on.release();
+                        continue;
+                    }
+                }
+            }
+            let source = &self.thumbs[&on.ticket];
+            let r = |s: &AtlasSlot| [s.x, s.y, s.width, s.height];
+            fit.fit(&self.device, &mut encoder, source, &self.atlas_view, (r(&f.padded), r(&f.inner)), f.frame.opaque);
+            read.push((on, f.frame.version));
+        }
+        self.queue.submit(Some(encoder.finish()));
+        // Only then may the compositor copy into it again.
+        self.queue.on_submitted_work_done(move || {
+            for (on, version) in read {
+                on.release();
+                on.read(version);
+            }
+        });
     }
 
     /// The single-plane layouts (modifiers) of BGRA the card can do that with.
