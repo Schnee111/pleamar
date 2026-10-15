@@ -230,6 +230,10 @@ pub fn on_check(wake: Box<dyn Fn() + Send>) {
 /// The frames to sum of the buffers a render has (`has`); the others stay for
 /// the render that does, and those of buffers no longer in use go.
 pub fn checks(has: impl Fn(u64) -> bool) -> Vec<Check> {
+    // Asked every round: with nothing to sum, nothing else is looked at.
+    if CHECKS.lock().unwrap().is_empty() {
+        return Vec::new();
+    }
     let used = cards();
     let mut c = CHECKS.lock().unwrap();
     c.retain(|t| used.contains(&t.on.ticket));

@@ -1969,6 +1969,10 @@ pub struct Gpu {
     fit: Option<crate::dmabuf::FitFrame>,
     #[cfg(target_os = "linux")]
     hash: Option<crate::dmabuf::HashFrame>,
+    /// Where the sums go to be waited for: a thread of their own, so the
+    /// render never waits for the card to add a frame up.
+    #[cfg(target_os = "linux")]
+    summer: Option<std::sync::mpsc::Sender<Summing>>,
     last_submission: std::cell::RefCell<Option<Sent>>,
     /// The layouts of the card's memory it can paint BGRA in, for a platform
     /// that lends its own textures (a monitor driven directly).
@@ -2128,7 +2132,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { _gl_instance: gl_instance, lens, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
+        let mut g = Gpu { _gl_instance: gl_instance, lens, no_backdrop_group, can_copy, own_frames: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "linux")] thumbs: Default::default(), #[cfg(target_os = "linux")] fit: None, #[cfg(target_os = "linux")] hash: None, #[cfg(target_os = "linux")] summer: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -2844,8 +2848,8 @@ impl Gpu {
 
     /// Tells the thumbnails service, for each window it has just had copied
     /// into a buffer made here, what that frame's pixels add up to: the same as
-    /// last time, and it is not a new picture. Read back at once, 8 bytes each,
-    /// so a still window costs a moment of the card and no round.
+    /// last time, and it is not a new picture. 8 bytes each, read back by a
+    /// thread of their own (`Summing`): the render submits and goes on.
     #[cfg(target_os = "linux")]
     pub fn check_thumbnails(&mut self) {
         use crate::platform::{thumbnail_checked, thumbnail_checks};
@@ -2875,16 +2879,27 @@ impl Gpu {
             encoder.copy_buffer_to_buffer(&sums, step * i, &out, 8 * i, 8);
         }
         let index = self.queue.submit(Some(encoder.finish()));
-        // Released once the card has read them, not when the wait below ends.
+        // Released once the card has read them, not when the sums are read.
         let read: Vec<_> = checks.iter().map(|t| t.on.clone()).collect();
         self.queue.on_submitted_work_done(move || read.iter().for_each(|on| on.release()));
-        out.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        let done = self.device.poll(wgpu::PollType::Wait { submission_index: Some(index), timeout: Some(std::time::Duration::from_millis(50)) }).is_ok();
-        let data = done.then(|| out.slice(..).get_mapped_range().ok()).flatten();
-        for (i, t) in checks.into_iter().enumerate() {
-            // Not read in time: a new picture, as without the check.
-            let sum = data.as_ref().map(|d| u64::from_ne_bytes(d[i * 8..i * 8 + 8].try_into().unwrap()));
-            thumbnail_checked(t.on.ticket, t.n, sum);
+        let mapped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = mapped.clone();
+        out.slice(..).map_async(wgpu::MapMode::Read, move |r| flag.store(r.is_ok(), std::sync::atomic::Ordering::Release));
+        let job = Summing { index, out, mapped, checks: checks.into_iter().map(|t| (t.on.ticket, t.n)).collect() };
+        // Waited for elsewhere: a still window costs the render a submit, not a wait.
+        if self.summer.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel::<Summing>();
+            let device = self.device.clone();
+            let _ = std::thread::Builder::new().name("sums".into()).spawn(move || {
+                for job in rx {
+                    job.read(&device);
+                }
+            });
+            self.summer = Some(tx);
+        }
+        if let Some(Err(std::sync::mpsc::SendError(job))) = self.summer.as_ref().map(|s| s.send(job)) {
+            // (The thread is gone: no sums, so each copy is new, as without them.)
+            job.unanswered();
         }
     }
 
@@ -3856,4 +3871,46 @@ impl Sent {
 thread_local! {
     /// How long this thread's waits for the card usually take, in ms.
     static WAIT_USUALLY: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+}
+
+/// Sums of live windows' frames on the card, submitted, for the thread that
+/// waits for them (`Gpu::check_thumbnails`): the submission, where they are
+/// read back, whether that mapping came, and which copy of which buffer each is.
+#[cfg(target_os = "linux")]
+pub struct Summing {
+    index: wgpu::SubmissionIndex,
+    out: wgpu::Buffer,
+    mapped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    checks: Vec<(u64, u64)>,
+}
+
+#[cfg(target_os = "linux")]
+impl Summing {
+    /// Waits for the card, at most 50 ms, and tells the thumbnails service
+    /// each sum; one not read in time is a new picture, as without the sum.
+    fn read(self, device: &wgpu::Device) {
+        use std::sync::atomic::Ordering;
+        let done = device.poll(wgpu::PollType::Wait { submission_index: Some(self.index.clone()), timeout: Some(std::time::Duration::from_millis(50)) }).is_ok();
+        // (The mapping is finished by a poll after the work it waited for.)
+        if done && !self.mapped.load(Ordering::Acquire) {
+            let _ = device.poll(wgpu::PollType::Poll);
+        }
+        if !done || !self.mapped.load(Ordering::Acquire) {
+            return self.unanswered();
+        }
+        let sums: Vec<u64> = match self.out.slice(..).get_mapped_range() {
+            Ok(d) => d.chunks_exact(8).map(|b| u64::from_ne_bytes(b.try_into().unwrap())).collect(),
+            Err(_) => return self.unanswered(),
+        };
+        self.out.unmap();
+        for ((ticket, n), sum) in self.checks.iter().zip(sums) {
+            crate::platform::thumbnail_checked(*ticket, *n, Some(sum));
+        }
+    }
+
+    fn unanswered(self) {
+        for (ticket, n) in self.checks {
+            crate::platform::thumbnail_checked(ticket, n, None);
+        }
+    }
 }
