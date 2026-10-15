@@ -1,6 +1,6 @@
 language 0.4
 // Keyboard or state feedback, without a simulated mouse press.
-// pleamar --say glass-feedback "emit select(2)"
+// pleamar --say glass-feedback "emit select 2"
 scene GlassFeedback {
     surface { size: 420, 120; kind: window; title: "Glass feedback"; keyboard: on_demand }
     fact selected = 0

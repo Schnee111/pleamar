@@ -1354,7 +1354,7 @@ scene Told {
 | `toggle fact` | |
 | `emit event` · `emit event(expr)` | with a payload, which reaches the logic and the rules that read it with `on event(v)` |
 | `impulse prop -620` · `impulse pop left * 5` | a shove: it adds to the velocity of the spring. The amount is evaluated on firing, so it can depend on what is going on: a countdown's bounce shrinks with the number left |
-| `ripple zone` | a ring of light from the centre of that zone through the glass, without a press or a pointer move; nothing if the zone is hidden, inactive or off screen, or with reduced motion. A new ripple replaces the previous one |
+| `ripple zone` | a ring of light from the centre of that zone through the glass, without a press or a pointer move; nothing if the zone is hidden, inactive or off screen, or with reduced motion. A new ripple replaces the previous one. Naming a shape here makes it a zone, like any rule that names it: it stops the clicks under it |
 | `play gesture` | it asks for it; it will be granted or not, depending on its class |
 | `focus field` · `blur` | gives the writing cursor to an `input`, or takes it away |
 
