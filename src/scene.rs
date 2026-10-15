@@ -2177,6 +2177,10 @@ pub enum ToRender {
     /// The logic has finished with the frame it was told of: what it said
     /// while at it came before this, and goes into the frame being made.
     FrameSeen,
+    /// Live windows' frames on the card to be summed, for the thumbnails
+    /// service to tell a new picture from the same one again: answered
+    /// without a round, at rest too.
+    Thumbnails,
     /// The name of the key, what it types if it types anything, and what it was pressed with.
     /// And its evdev code, to hand it to a window of the scene's compositor (0 if made up).
     Key(String, Option<String>, Mods, u32),

@@ -737,6 +737,12 @@ pub fn run(
                             answers.push(id);
                         }
                     }
+                    Ok(ToRender::Thumbnails) => {
+                        #[cfg(target_os = "linux")]
+                        if let Some(g) = &mut gpu {
+                            g.check_thumbnails();
+                        }
+                    }
                     Ok(m) => incoming.push(m),
                     Err(RecvTimeoutError::Timeout) if Instant::now() < until => {}
                     Err(RecvTimeoutError::Timeout) => break,
@@ -1276,6 +1282,14 @@ pub fn run(
                 }
                 ToRender::ScrollEnd => fingers_up = true,
                 ToRender::Wake | ToRender::FrameSeen => {}
+                #[cfg(target_os = "linux")]
+                ToRender::Thumbnails => {
+                    if let Some(g) = &mut gpu {
+                        g.check_thumbnails();
+                    }
+                }
+                #[cfg(not(target_os = "linux"))]
+                ToRender::Thumbnails => {}
                 ToRender::KeyRepeat(r) => key_repeat = r,
                 ToRender::Key(name, typed, mods, code) => {
                     last_activity = Instant::now();
@@ -3763,9 +3777,14 @@ pub fn run(
             std::thread::sleep(Duration::from_millis(8));
             continue;
         };
+        // Buffers on the card for live windows, asked by the thumbnails service.
+        #[cfg(target_os = "linux")]
+        g.answer_thumbnail_wants();
+        #[cfg(target_os = "linux")]
+        g.check_thumbnails();
         // What was uploaded to the atlas may take the slot of something that is no longer there: with
         // a new atlas, any letter may have changed without changing its `uv`.
-        if !letters.pending_upload.is_empty() {
+        if !letters.pending_upload.is_empty() || !letters.pending_fit.is_empty() {
             previous.forget();
             compose_memo = None;
         }
@@ -3773,6 +3792,10 @@ pub fn run(
         let wrote = !letters.pending_upload.is_empty() || !same_scene;
         g.fit_atlas(letters.atlas_height());
         g.upload_atlas(&mut letters.pending_upload);
+        #[cfg(target_os = "linux")]
+        g.fit_thumbnails(&mut letters.pending_fit);
+        #[cfg(not(target_os = "linux"))]
+        letters.pending_fit.clear();
         if !same_scene {
             g.upload(&draw);
         }

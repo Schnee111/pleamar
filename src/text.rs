@@ -205,6 +205,8 @@ struct Typesetter {
     glyphs: HashMap<CacheKey, Option<(AtlasSlot, i32, i32, bool)>>,
     /// What has been painted since the last delivery: where and what (premultiplied RGBA).
     pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
+    /// Live windows' frames on the card, for the render to make small into the atlas.
+    pending_fit: Vec<Fit>,
     /// How many real pixels per logical pixel it is painted at: that of the finest sheet.
     scale: f32,
     exhausted: bool,
@@ -218,7 +220,7 @@ impl Typesetter {
         let t0 = std::time::Instant::now();
         let fonts = FontSystem::new();
         println!("text   · {} system fonts in {} ms", fonts.db().len(), t0.elapsed().as_millis());
-        Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), scale: 1.0, exhausted: false, frames: HashMap::new() }
+        Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), scale: 1.0, exhausted: false, frames: HashMap::new() }
     }
 
     /// When the scale changes, everything painted stops being valid.
@@ -227,6 +229,7 @@ impl Typesetter {
         self.shelves = self.shelves.emptied();
         self.glyphs.clear();
         self.pending_upload.clear();
+        self.pending_fit.clear();
         self.exhausted = false;
         self.frames.clear();
     }
@@ -463,7 +466,11 @@ impl Typesetter {
         if self.frames.get(&key).is_some_and(|&(v, s)| v == frame.version && place(s) == place(slot)) {
             return Some(slot);
         }
-        self.upload(slot, fit_frame(&frame, px));
+        if frame.card.is_some() {
+            self.pending_fit.push(Fit::new(slot, frame.clone(), px));
+        } else {
+            self.upload(slot, fit_frame(&frame, px));
+        }
         self.frames.insert(key, (frame.version, slot));
         Some(slot)
     }
@@ -527,7 +534,7 @@ impl Typesetter {
                 Delivery::Rebuilt { snapshot, working, generation }
             }
         };
-        Some(Parcel { delivery, pending_upload: std::mem::take(&mut self.pending_upload), exhausted: self.exhausted, height: self.shelves.height, most: self.shelves.most })
+        Some(Parcel { delivery, pending_upload: std::mem::take(&mut self.pending_upload), pending_fit: std::mem::take(&mut self.pending_fit), exhausted: self.exhausted, height: self.shelves.height, most: self.shelves.most })
     }
 }
 
@@ -579,6 +586,7 @@ pub enum Delivery {
 pub struct Parcel {
     pub delivery: Delivery,
     pub pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
+    pub pending_fit: Vec<Fit>,
     pub exhausted: bool,
     /// How tall the atlas the workshop paints into is, and the most it let it grow.
     pub height: u32,
@@ -607,6 +615,7 @@ pub struct Texts {
     /// The last thing each live image showed, while the new one arrives.
     last_live: HashMap<usize, AtlasSlot>,
     pub pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
+    pub pending_fit: Vec<Fit>,
     generation: u32,
     scale: f32,
     working: WorkingSet,
@@ -641,7 +650,7 @@ impl Texts {
     }
 
     fn new(to_workshop: Sender<Job>) -> Self {
-        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), generation: 0, scale: 1.0, working: WorkingSet::default(), exhausted: false, rebuilding: false, too_large: None, height: ATLAS_SIZE, most: ATLAS_SIZE }
+        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), generation: 0, scale: 1.0, working: WorkingSet::default(), exhausted: false, rebuilding: false, too_large: None, height: ATLAS_SIZE, most: ATLAS_SIZE }
     }
 
     pub fn scale(&self) -> f32 {
@@ -681,6 +690,7 @@ impl Texts {
         self.live_version.clear();
         self.last_live.clear();
         self.pending_upload.clear();
+        self.pending_fit.clear();
         self.working = WorkingSet::default();
         self.exhausted = false;
         self.rebuilding = false;
@@ -705,8 +715,10 @@ impl Texts {
             // Old UVs and new atlas pixels become visible together. Until
             // this parcel arrived, the previous frame remained usable.
             self.pending_upload.clear();
+            self.pending_fit.clear();
         }
         self.pending_upload.extend(p.pending_upload);
+        self.pending_fit.extend(p.pending_fit);
         match p.delivery {
             Delivery::Layout { key, layout, .. } => {
                 self.requested.remove(&key);
@@ -921,6 +933,25 @@ fn fit(img: image::RgbaImage, px: (u32, u32), sharp: bool) -> Vec<u8> {
 /// bytes, which the compiler turns into vector code—, then each box across
 /// that sum. Made bigger, a window smaller than where it is drawn, it is
 /// filtered like any image.
+/// A live window's frame on the card (`thumbnails.live`), made small by the
+/// render the way `fit_frame` does it here: into `inner`, centred in the slot,
+/// the rest of `padded` (the slot and its gutter) left transparent.
+pub struct Fit {
+    pub padded: AtlasSlot,
+    pub inner: AtlasSlot,
+    pub frame: Arc<crate::platform::ThumbnailFrame>,
+}
+
+impl Fit {
+    fn new(slot: AtlasSlot, frame: Arc<crate::platform::ThumbnailFrame>, px: (u32, u32)) -> Fit {
+        let (fw, fh) = (frame.width.max(1), frame.height.max(1));
+        let k = (px.0 as f32 / fw as f32).min(px.1 as f32 / fh as f32);
+        let (w, h) = (((fw as f32 * k).round() as u32).clamp(1, px.0), ((fh as f32 * k).round() as u32).clamp(1, px.1));
+        let inner = AtlasSlot { x: slot.x + (px.0 - w) / 2, y: slot.y + (px.1 - h) / 2, width: w, height: h };
+        Fit { padded: AtlasSlot { x: slot.x - 1, y: slot.y - 1, width: slot.width + 2, height: slot.height + 2 }, inner, frame }
+    }
+}
+
 fn fit_frame(f: &crate::platform::ThumbnailFrame, px: (u32, u32)) -> Vec<u8> {
     let (fw, fh) = (f.width.max(1), f.height.max(1));
     let k = (px.0 as f32 / fw as f32).min(px.1 as f32 / fh as f32);
@@ -1008,7 +1039,7 @@ mod tests {
     use super::*;
 
     fn frame(width: u32, height: u32, bgra: [u8; 4], opaque: bool) -> crate::platform::ThumbnailFrame {
-        crate::platform::ThumbnailFrame { version: 1, width, height, pixels: bgra.repeat((width * height) as usize), opaque }
+        crate::platform::ThumbnailFrame { version: 1, width, height, pixels: bgra.repeat((width * height) as usize), opaque, card: None }
     }
 
     #[test]
@@ -1019,7 +1050,7 @@ mod tests {
         let mut n = 7u32;
         let pixels: Vec<u8> = (0..fw * fh * 4).map(|_| { n = n.wrapping_mul(1_103_515_245).wrapping_add(12_345); (n >> 16) as u8 }).collect();
         for opaque in [true, false] {
-            let f = crate::platform::ThumbnailFrame { version: 1, width: fw, height: fh, pixels: pixels.clone(), opaque };
+            let f = crate::platform::ThumbnailFrame { version: 1, width: fw, height: fh, pixels: pixels.clone(), opaque, card: None };
             let out = fit_frame(&f, (w, h));
             for y in 0..h {
                 for x in 0..w {
@@ -1134,7 +1165,7 @@ mod tests {
         let (send, _jobs) = channel();
         let mut texts = Texts::new(send);
         texts.generation = 5;
-        texts.receive(Parcel { delivery: Delivery::Live { name: "x".into(), size: (1, 1), slot: None, generation: 4 }, pending_upload: Vec::new(), exhausted: false, height: 4096, most: ATLAS_SIZE });
+        texts.receive(Parcel { delivery: Delivery::Live { name: "x".into(), size: (1, 1), slot: None, generation: 4 }, pending_upload: Vec::new(), pending_fit: Vec::new(), exhausted: false, height: 4096, most: ATLAS_SIZE });
         assert_eq!(texts.atlas_height(), 4096);
         texts.too_large = Some(WorkingSet::default());
         texts.allow_atlas(8192);
@@ -1144,7 +1175,7 @@ mod tests {
         texts.rebuilding = true;
         let snapshot = Snapshot { layouts: HashMap::new(), images: Vec::new(), animations: Vec::new(), live: HashMap::new() };
         let generation = texts.generation;
-        texts.receive(Parcel { delivery: Delivery::Rebuilt { snapshot, working: WorkingSet::default(), generation }, pending_upload: Vec::new(), exhausted: true, height: ATLAS_SIZE, most: ATLAS_SIZE });
+        texts.receive(Parcel { delivery: Delivery::Rebuilt { snapshot, working: WorkingSet::default(), generation }, pending_upload: Vec::new(), pending_fit: Vec::new(), exhausted: true, height: ATLAS_SIZE, most: ATLAS_SIZE });
         assert!(texts.exhausted && texts.too_large.is_none() && !texts.rebuilding);
     }
 
