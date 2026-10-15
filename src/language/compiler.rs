@@ -6149,7 +6149,11 @@ impl<'a> Compiler<'a> {
         self.unwatched.set(true);
         for (n, scopes) in &rules {
             self.scopes = scopes.clone();
-            for f in &n.head {
+            let feedback = n.body.as_deref().unwrap_or(&[]).iter().filter_map(|e| match e {
+                Entry::Node(n) if matches!(n.head.first().map(|t| &t.kind), Some(TokenKind::Id(s)) if s == "ripple") => n.head.get(1),
+                _ => None,
+            });
+            for f in n.head.iter().chain(feedback) {
                 if let TokenKind::Id(s) = &f.kind {
                     let g = self.global(s);
                     if let Some(m) = self.screen_mark() {
@@ -6317,6 +6321,7 @@ impl<'a> Compiler<'a> {
                     let mut c = Cur::new(&x.head, x.line, x.col);
                     let p = c.id("an effect")?;
                     effects.push(match if vocab::EFFECTS.contains(&p.as_str()) { p.as_str() } else { "" } {
+                        "ripple" => Effect::Ripple(self.zone(&mut c)?),
                         "toggle" => Effect::Toggle(self.fact(&mut c)?),
                         "blur" => Effect::FocusField(None),
                         "focus" if self.names_window(&c) => Effect::Window(WindowAction::Focus, self.which_window(&mut c)?),
