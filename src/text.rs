@@ -116,14 +116,21 @@ pub struct LayoutKey {
     width: Option<u32>,
     align: TextAlign,
     max_lines: Option<usize>,
+    /// Stretches of it (byte ranges) bold, italic or code: `crate::markdown`.
+    marks: Vec<(u32, u32, u8)>,
 }
 
 impl LayoutKey {
     pub fn new(text: &str, e: &Style, width: Option<f32>) -> LayoutKey {
         LayoutKey {
             text: text.to_owned(), family: e.family, px: e.px.to_bits(), weight: e.weight, line_height: e.line_height.to_bits(),
-            width: width.map(|a| a.round().max(1.0) as u32), align: e.align, max_lines: e.max_lines,
+            width: width.map(|a| a.round().max(1.0) as u32), align: e.align, max_lines: e.max_lines, marks: Vec::new(),
         }
+    }
+
+    /// A text already without its marks, and what they marked.
+    pub fn marked(text: String, marks: Vec<(u32, u32, u8)>, e: &Style, width: Option<f32>) -> LayoutKey {
+        LayoutKey { text, marks, ..LayoutKey::new("", e, width) }
     }
 }
 
@@ -214,7 +221,38 @@ impl Typesetter {
             TextAlign::Center => Align::Center,
             TextAlign::Right => Align::Right,
         };
-        buffer.set_text(&c.text, &attrs, Shaping::Advanced, Some(align));
+        if c.marks.is_empty() {
+            buffer.set_text(&c.text, &attrs, Shaping::Advanced, Some(align));
+        } else {
+            // The marked stretches with their looks, and what is between them plain.
+            let look = |m: u8| {
+                let mut a = attrs.clone();
+                if m & crate::markdown::BOLD != 0 {
+                    a = a.weight(Weight((c.weight + 300).min(900)));
+                }
+                if m & crate::markdown::ITALIC != 0 {
+                    a = a.style(cosmic_text::Style::Italic);
+                }
+                if m & crate::markdown::CODE != 0 {
+                    a = a.family(Family::Monospace);
+                }
+                a
+            };
+            let mut spans = Vec::with_capacity(c.marks.len() * 2 + 1);
+            let mut at = 0usize;
+            for &(from, to, m) in &c.marks {
+                let (from, to) = (from as usize, to as usize);
+                if from > at {
+                    spans.push((&c.text[at..from], attrs.clone()));
+                }
+                spans.push((&c.text[from..to], look(m)));
+                at = to;
+            }
+            if at < c.text.len() {
+                spans.push((&c.text[at..], attrs.clone()));
+            }
+            buffer.set_rich_text(spans, &attrs, Shaping::Advanced, Some(align));
+        }
         buffer.shape_until_scroll(&mut self.fonts, false);
 
         let s = self.scale;

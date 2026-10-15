@@ -1107,11 +1107,13 @@ pub struct Style {
     pub align: TextAlign,
     /// Beyond this many lines, an ellipsis.
     pub max_lines: Option<usize>,
+    /// `markdown: true`: its marks are read, not shown (`crate::markdown`).
+    pub markdown: bool,
 }
 
 impl Style {
     pub fn new(px: f32, color: Color) -> Self {
-        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None }
+        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false }
     }
     pub fn weight(mut self, p: u16) -> Self {
         self.weight = p;

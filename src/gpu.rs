@@ -1548,9 +1548,16 @@ impl DrawList {
                     let fx = text_fx.take();
                     let select = text_select.take();
                     let text = content_text(content, c, texts);
+                    // With `markdown:`, its marks go; everything from here on reads it without them.
+                    let (text, key) = if style.markdown {
+                        let (plain, marks) = crate::markdown::plain(&text);
+                        (std::borrow::Cow::Owned(plain.clone()), LayoutKey::marked(plain, marks, style, width.as_ref().map(|w| w.eval(c))))
+                    } else {
+                        let key = LayoutKey::new(&text, style, width.as_ref().map(|w| w.eval(c)));
+                        (text, key)
+                    };
                     let text: &str = &text;
                     // It is ordered even if not visible: so that when it appears, it is already there.
-                    let key = LayoutKey::new(text, style, width.as_ref().map(|w| w.eval(c)));
                     let Some(m) = tip.layout(idx, key) else { continue };
                     if let Some((w, h)) = measure {
                         self.measurements.push((*w, m.size.0));

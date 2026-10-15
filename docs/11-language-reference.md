@@ -506,7 +506,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `path` | `at` (what its points hang from) · `size: w, h` (what it takes up in a layout), and inside it its steps: `move x, y` (once, the first one) · `line x, y` · `curve x, y via cx, cy` · `close`. Closed, it is filled; open, or with `stroke`, it is a line |
 | …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `carries` (below) · `show` · `label` · `agent` · `role` · `value` · `checked` · `selected` (§13, *Told to an agent*) |
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
-| `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` · and its effects: `gradient` · `outline` · `shadow` · `letter_move` · `letter_opacity` · `letter_scale` (§8.4) · `selectable` · `selection` |
+| `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` · and its effects: `gradient` · `outline` · `shadow` · `letter_move` · `letter_opacity` · `letter_scale` (§8.4) · `selectable` · `selection` · `markdown` |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `cell: which, columns, rows` (one picture of a sheet: below) · `show` |
 | `particles` | `at` · `area` · `count` · `life` · `speed` · `direction` · `spread` · `gravity` · `drag` · `size` · `colors` · `opacity` · `shape` · `emit` or `burst` · `show`: §8.3 |
 | `shader` | `at` (its top left corner) · `size: w, h` · `corner` · `opacity` · `show` · `values: a, b, …` (up to eight numbers, any expression) · `colors: c1, c2` (up to two). What it is and how it is written: §8.1 |
@@ -989,6 +989,12 @@ go of the selection.
 
 ```
 text r.text { at: 2, 2; width: 520; size: 13.5; color: ink; selectable: true; selection: #2f5a50 }
+```
+
+**What a model writes.** With `markdown: true` a text shows what its marks mean instead of the marks: `**bold**`, `*italic*` (and `_italic_` outside a word), `` `code` `` in the monospace font, `# a title` in bold, `- a point` as `• a point`, `> a quote` in italics, `[a link](…)` as its words, and a block between ` ``` ` lines in monospace. A star between spaces (`2 * 3`) or an underscore inside a name stays as it is, and `\*` is a star. A mark still open at the end —a model halfway through `**this`— does not show. Everything else reads the text without its marks: its letters (`letter_*`), what is selected and copied, and what an agent is told.
+
+```
+text r.text { at: 2, 2; width: 520; size: 13.5; color: ink; markdown: true; selectable: true }
 ```
 
 ## 9. Layouts
@@ -1515,7 +1521,7 @@ properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
 properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk opacity show
-properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection
+properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown
 properties.image: at size opacity tint cell show grow
 properties.window: at size ask opacity show
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow

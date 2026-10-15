@@ -3147,6 +3147,15 @@ impl<'a> Compiler<'a> {
         if let Some(c) = p.get_mut("lines") {
             style.max_lines = Some(c.num()? as usize);
         }
+        if let Some(c) = p.get_mut("markdown") {
+            let v = c.id("true or false")?;
+            c.expect_end()?;
+            style.markdown = match v.as_str() {
+                "true" => true,
+                "false" => false,
+                _ => return c.error("`markdown` is true or false"),
+            };
+        }
         if let Some(c) = p.get_mut("family") {
             style.family = Some(interned(&c.string()?));
         }

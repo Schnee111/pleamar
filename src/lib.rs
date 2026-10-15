@@ -19,6 +19,7 @@ mod agent;
 #[cfg(target_os = "linux")]
 pub mod dmabuf;
 mod lens;
+mod markdown;
 mod language;
 mod logic;
 #[cfg(feature = "luau")]
