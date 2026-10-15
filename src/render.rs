@@ -937,6 +937,7 @@ pub fn run(
                         })
                     });
                     g.set_shaders(&scene.shaders);
+                    letters.allow_atlas(g.atlas_most());
                     // A scene that asks for "the full width" measures whatever its monitor measures, and it
                     // can know it: `screen.width`.
                     // A window measures whatever the compositor has given it, and that can change.
@@ -3770,6 +3771,7 @@ pub fn run(
         }
         // (What is written to the card waits in memory for the next thing submitted to it.)
         let wrote = !letters.pending_upload.is_empty() || !same_scene;
+        g.fit_atlas(letters.atlas_height());
         g.upload_atlas(&mut letters.pending_upload);
         if !same_scene {
             g.upload(&draw);
@@ -3941,14 +3943,20 @@ pub fn run(
             // `PLEAMAR_NO_LENS=1`: none bends it, and the compositor blurs it.
             let (mut with_lens, mut without) = (Vec::new(), Vec::new());
             // Closed, it shows no glass: nothing behind it is blurred.
-            for (b, lens) in draw.glass_regions.iter().filter(|_| l.open).filter(|(b, _)| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]) {
-                if *lens && !no_lens { with_lens.push(local(b)) } else { without.push(local(b)) }
+            // (A shader that reads what is behind is captured too, but never blurred instead.)
+            let mut read = Vec::new();
+            for (b, how) in draw.glass_regions.iter().filter(|_| l.open).filter(|(b, _)| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]) {
+                match how {
+                    crate::gpu::Behind::Lens if !no_lens => with_lens.push(local(b)),
+                    crate::gpu::Behind::Read => read.push(local(b)),
+                    _ => without.push(local(b)),
+                }
             }
-            l.wants_lens = !with_lens.is_empty();
+            l.wants_lens = !with_lens.is_empty() || !read.is_empty();
             // Only what is needed is captured: the glass's box, with a
             // margin for frosting, rounded to 16 px so as not to remake
             // textures over one pixel. In Marea, the little ball and not the 820 × 680.
-            l.glass_box = with_lens.iter().copied().reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]).map(|b| {
+            l.glass_box = with_lens.iter().chain(&read).copied().reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]).map(|b| {
                 let m = crate::lens::MARGIN.ceil() as i32;
                 let (w, h) = (l.view.size.0 as i32, l.view.size.1 as i32);
                 let x0 = ((b[0] - m).max(0) / 16) * 16;

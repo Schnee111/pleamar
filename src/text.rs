@@ -14,7 +14,10 @@ use std::sync::Arc;
 use cosmic_text::{Align, Attrs, Buffer, CacheKey, Ellipsize, EllipsizeHeightLimit, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent, Weight, Wrap};
 use std::collections::HashMap;
 
+/// The atlas's width, and the height it starts with.
 pub const ATLAS_SIZE: u32 = 2048;
+/// The tallest it grows to when what is seen does not fit: 2048×8192, 64 MB.
+pub const ATLAS_MOST: u32 = 8192;
 
 /// A piece of the atlas, in pixels.
 #[derive(Clone, Copy, Debug)]
@@ -26,9 +29,10 @@ pub struct AtlasSlot {
 }
 
 impl AtlasSlot {
+    /// Where it is, in the atlas's pixels: the shader divides by the size the
+    /// atlas has, so a piece keeps its `uv` when the atlas grows.
     pub fn uv(&self) -> [f32; 4] {
-        let l = ATLAS_SIZE as f32;
-        [self.x as f32 / l, self.y as f32 / l, (self.x + self.width) as f32 / l, (self.y + self.height) as f32 / l]
+        [self.x as f32, self.y as f32, (self.x + self.width) as f32, (self.y + self.height) as f32]
     }
 }
 
@@ -138,11 +142,30 @@ impl LayoutKey {
 struct Shelves {
     rows: Vec<(u32, u32, u32)>, // y, height, how far it is filled
     next_y: u32,
+    /// How tall the atlas is, and the most the card lets it grow to.
+    height: u32,
+    most: u32,
+    /// That something that could fit found no room: a taller atlas would help.
+    short: bool,
 }
 
 impl Shelves {
     fn new() -> Self {
-        Shelves { rows: Vec::new(), next_y: 1 }
+        Shelves { rows: Vec::new(), next_y: 1, height: ATLAS_SIZE, most: ATLAS_SIZE, short: false }
+    }
+
+    /// Empty again, as tall as it was: an atlas never shrinks.
+    fn emptied(&self) -> Self {
+        Shelves { rows: Vec::new(), next_y: 1, height: self.height, most: self.most, short: false }
+    }
+
+    /// Twice as tall, if it may be and it would help.
+    fn grow(&mut self) -> bool {
+        if !self.short || self.height >= self.most {
+            return false;
+        }
+        self.height = (self.height * 2).min(self.most);
+        true
     }
 
     fn request(&mut self, width: u32, height: u32) -> Option<AtlasSlot> {
@@ -158,7 +181,8 @@ impl Shelves {
                 (*y, x)
             }
             None => {
-                if self.next_y + h > ATLAS_SIZE || w > ATLAS_SIZE {
+                if self.next_y + h > self.height || w > ATLAS_SIZE {
+                    self.short = true;
                     return None;
                 }
                 let y = self.next_y;
@@ -200,7 +224,7 @@ impl Typesetter {
     /// When the scale changes, everything painted stops being valid.
     fn clear(&mut self, scale: f32) {
         self.scale = scale;
-        self.shelves = Shelves::new();
+        self.shelves = self.shelves.emptied();
         self.glyphs.clear();
         self.pending_upload.clear();
         self.exhausted = false;
@@ -355,7 +379,7 @@ impl Typesetter {
         let slots = images
             .iter()
             .map(|(source, (w, h))| {
-                let px = (((*w as f32) * self.scale).round().max(1.0) as u32, ((*h as f32) * self.scale).round().max(1.0) as u32);
+                let px = fit_side((((*w as f32) * self.scale).round().max(1.0) as u32, ((*h as f32) * self.scale).round().max(1.0) as u32));
                 let path = match source {
                     ImageSource::File(r) | ImageSource::Pixels(r) => Some(r.clone()),
                     ImageSource::Icon(name) => crate::platform::icon(name),
@@ -384,15 +408,15 @@ impl Typesetter {
                     return first;
                 }
                 animations.push(None);
-                let slot = path.as_ref().and_then(|r| rasterize_image(r, px, sharp)).and_then(|rgba| {
-                    let slot = self.reserve(px.0, px.1)?;
-                    self.upload(slot, rgba);
-                    Some(slot)
-                });
-                if slot.is_none() {
+                // One that does not fit is not reported here: the atlas is rebuilt,
+                // taller if it may be, and only what still does not fit is said.
+                let Some(rgba) = path.as_ref().and_then(|r| rasterize_image(r, px, sharp)) else {
                     eprintln!("image  · cannot load {source:?}");
-                }
-                slot
+                    return None;
+                };
+                let slot = self.reserve(px.0, px.1)?;
+                self.upload(slot, rgba);
+                Some(slot)
             })
             .collect();
         (slots, animations)
@@ -444,7 +468,20 @@ impl Typesetter {
         Some(slot)
     }
 
+    /// Everything that is seen, into an empty atlas. If it does not fit, into
+    /// one twice as tall, while the card allows it: what is seen grows the
+    /// atlas, not what was seen once and is gone.
     fn rebuild(&mut self, working: &WorkingSet, images: &[(ImageSource, (u32, u32))]) -> Snapshot {
+        loop {
+            let snapshot = self.rebuild_once(working, images);
+            if !self.exhausted || !self.shelves.grow() {
+                return snapshot;
+            }
+            println!("text   · what is seen does not fit the atlas: it grows to {ATLAS_SIZE}×{}", self.shelves.height);
+        }
+    }
+
+    fn rebuild_once(&mut self, working: &WorkingSet, images: &[(ImageSource, (u32, u32))]) -> Snapshot {
         self.clear(self.scale);
         // Text gets space before pictures. Old covers, search results and
         // animated font sizes are not part of the new generation.
@@ -463,6 +500,10 @@ impl Typesetter {
         let delivery = match job {
             Job::Clear(scale) => {
                 self.clear(scale);
+                return None;
+            }
+            Job::Limit(most) => {
+                self.shelves.most = most.clamp(ATLAS_SIZE, ATLAS_MOST);
                 return None;
             }
             Job::Layout(key, generation) => {
@@ -486,7 +527,7 @@ impl Typesetter {
                 Delivery::Rebuilt { snapshot, working, generation }
             }
         };
-        Some(Parcel { delivery, pending_upload: std::mem::take(&mut self.pending_upload), exhausted: self.exhausted })
+        Some(Parcel { delivery, pending_upload: std::mem::take(&mut self.pending_upload), exhausted: self.exhausted, height: self.shelves.height, most: self.shelves.most })
     }
 }
 
@@ -522,6 +563,8 @@ enum Job {
     Reload(String, (u32, u32), AtlasSlot, u32),
     /// New atlas, at this scale. Everything from previous generations is thrown away.
     Clear(f32),
+    /// The tallest the card lets the atlas be.
+    Limit(u32),
     Rebuild(WorkingSet, Vec<(ImageSource, (u32, u32))>, u32),
 }
 
@@ -537,6 +580,9 @@ pub struct Parcel {
     pub delivery: Delivery,
     pub pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
     pub exhausted: bool,
+    /// How tall the atlas the workshop paints into is, and the most it let it grow.
+    pub height: u32,
+    pub most: u32,
 }
 
 /// The render's side: it asks, does not wait, and meanwhile shows what it had.
@@ -568,6 +614,9 @@ pub struct Texts {
     rebuilding: bool,
     /// An oversized working set is reported once, not rebuilt every frame.
     too_large: Option<WorkingSet>,
+    /// How tall the atlas has to be on the card, and the most the card allows.
+    height: u32,
+    most: u32,
 }
 
 impl Texts {
@@ -592,11 +641,28 @@ impl Texts {
     }
 
     fn new(to_workshop: Sender<Job>) -> Self {
-        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), generation: 0, scale: 1.0, working: WorkingSet::default(), exhausted: false, rebuilding: false, too_large: None }
+        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), generation: 0, scale: 1.0, working: WorkingSet::default(), exhausted: false, rebuilding: false, too_large: None, height: ATLAS_SIZE, most: ATLAS_SIZE }
     }
 
     pub fn scale(&self) -> f32 {
         self.scale
+    }
+
+    /// How tall the atlas has to be on the card: it is never made smaller.
+    pub fn atlas_height(&self) -> u32 {
+        self.height
+    }
+
+    /// The tallest atlas the card allows. What did not fit before is tried again.
+    pub fn allow_atlas(&mut self, most: u32) {
+        if most == self.most {
+            return;
+        }
+        self.most = most;
+        let _ = self.to_workshop.send(Job::Limit(most));
+        if self.too_large.take().is_some() {
+            self.exhausted = true;
+        }
     }
 
     /// New scene or new scale: new atlas. What came before stops being valid, and
@@ -626,6 +692,8 @@ impl Texts {
     }
 
     pub fn receive(&mut self, p: Parcel) {
+        // Even from an old generation: the workshop's atlas is that tall now.
+        self.height = self.height.max(p.height);
         let generation = match &p.delivery {
             Delivery::Layout { generation, .. } | Delivery::Images { generation, .. } | Delivery::Live { generation, .. } | Delivery::Rebuilt { generation, .. } => *generation,
         };
@@ -670,10 +738,13 @@ impl Texts {
                 self.last.clear();
                 self.last_live.clear();
                 self.rebuilding = false;
-                self.exhausted = false;
-                self.too_large = p.exhausted.then_some(working);
-                if p.exhausted {
-                    eprintln!("text   · visible text and images exceed the {ATLAS_SIZE}² atlas; reduce their size or number");
+                // Rebuilt before the workshop knew how tall the card lets it be:
+                // tried again, taller, rather than given up on.
+                let retry = p.exhausted && p.most < self.most;
+                self.exhausted = retry;
+                self.too_large = (p.exhausted && !retry).then_some(working);
+                if p.exhausted && !retry {
+                    eprintln!("text   · visible text and images exceed the {ATLAS_SIZE}×{} atlas; reduce their size or number", self.height);
                 }
             }
         }
@@ -905,6 +976,18 @@ fn fit_frame(f: &crate::platform::ThumbnailFrame, px: (u32, u32)) -> Vec<u8> {
 }
 
 /// Premultiplied RGBA, at exactly `px`, fitted without distorting.
+/// No side longer than the atlas holds: one that asks for more —a sheet as
+/// wide as the atlas, any big picture at a scale of 2— is made smaller, the
+/// same shape, and shown a little softer rather than not at all.
+fn fit_side((w, h): (u32, u32)) -> (u32, u32) {
+    let edge = ATLAS_SIZE - 2;
+    if w <= edge && h <= edge {
+        return (w, h);
+    }
+    let k = (edge as f32 / w as f32).min(edge as f32 / h as f32);
+    (((w as f32 * k).round() as u32).clamp(1, edge), ((h as f32 * k).round() as u32).clamp(1, edge))
+}
+
 fn rasterize_image(path: &std::path::Path, px: (u32, u32), sharp: bool) -> Option<Vec<u8>> {
     let data = std::fs::read(path).ok()?;
     let is_svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
@@ -1017,6 +1100,60 @@ mod tests {
         let slot = shelves.request(ATLAS_SIZE - 2, ATLAS_SIZE - 2).unwrap();
         assert_eq!((slot.x + slot.width + 1, slot.y + slot.height + 1), (ATLAS_SIZE, ATLAS_SIZE));
         assert!(shelves.request(1, 1).is_none());
+    }
+
+    #[test]
+    fn a_working_set_that_does_not_fit_grows_the_atlas_while_the_card_allows() {
+        let mut t = Typesetter::new();
+        // Two pictures of 2000², which a 2048² atlas cannot hold together.
+        let fill = |t: &mut Typesetter| [t.reserve(2000, 2000), t.reserve(2000, 2000)];
+        let set = WorkingSet::default();
+        t.rebuild(&set, &[]);
+        assert!(fill(&mut t)[1].is_none() && t.shelves.short);
+        // Rebuilt as a frame that sees them: without the card's say, it stays.
+        t.exhausted = true;
+        assert!(!t.shelves.grow());
+        t.work(Job::Limit(16384));
+        assert_eq!(t.shelves.most, ATLAS_MOST);
+        assert!(t.shelves.grow());
+        assert_eq!(t.shelves.height, 2 * ATLAS_SIZE);
+        t.clear(1.0);
+        let slots = fill(&mut t);
+        let second = slots[1].expect("a 2048×4096 atlas holds both");
+        assert_eq!(second.uv()[1], second.y as f32, "uv is in pixels, the same whatever the height");
+        // Emptied for a new scene, it keeps its height: the card's texture does not shrink.
+        t.clear(1.0);
+        assert_eq!(t.shelves.height, 2 * ATLAS_SIZE);
+        // A piece wider than the atlas grows nothing.
+        t.clear(1.0);
+        assert!(t.reserve(ATLAS_SIZE, 10).is_none() && !t.shelves.grow());
+    }
+
+    #[test]
+    fn the_render_learns_the_height_even_from_an_old_generation() {
+        let (send, _jobs) = channel();
+        let mut texts = Texts::new(send);
+        texts.generation = 5;
+        texts.receive(Parcel { delivery: Delivery::Live { name: "x".into(), size: (1, 1), slot: None, generation: 4 }, pending_upload: Vec::new(), exhausted: false, height: 4096, most: ATLAS_SIZE });
+        assert_eq!(texts.atlas_height(), 4096);
+        texts.too_large = Some(WorkingSet::default());
+        texts.allow_atlas(8192);
+        assert!(texts.exhausted && texts.too_large.is_none(), "what did not fit is tried again in the taller atlas");
+        // A rebuild the workshop made before it heard of the card's limit: tried again, not given up on.
+        texts.exhausted = false;
+        texts.rebuilding = true;
+        let snapshot = Snapshot { layouts: HashMap::new(), images: Vec::new(), animations: Vec::new(), live: HashMap::new() };
+        let generation = texts.generation;
+        texts.receive(Parcel { delivery: Delivery::Rebuilt { snapshot, working: WorkingSet::default(), generation }, pending_upload: Vec::new(), exhausted: true, height: ATLAS_SIZE, most: ATLAS_SIZE });
+        assert!(texts.exhausted && texts.too_large.is_none() && !texts.rebuilding);
+    }
+
+    #[test]
+    fn a_picture_wider_than_the_atlas_is_made_to_fit() {
+        assert_eq!(fit_side((2048, 128)), (2046, 128));
+        assert_eq!(fit_side((4032, 936)), (2046, 475));
+        assert_eq!(fit_side((300, 200)), (300, 200));
+        assert!(Shelves::new().request(2046, 128).is_some());
     }
 
     #[test]

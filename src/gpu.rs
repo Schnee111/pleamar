@@ -3,7 +3,7 @@
 
 use crate::scene::*;
 use crate::platform::PlatformWindow;
-use crate::text::{LayoutKey, AtlasSlot, Texts, ATLAS_SIZE};
+use crate::text::{LayoutKey, AtlasSlot, Texts, ATLAS_MOST, ATLAS_SIZE};
 use std::ops::Range;
 
 const PER_SHAPE: usize = 20;
@@ -31,6 +31,17 @@ const INITIAL_POINTS: usize = 1024;
 /// Floats (r, g, b, where) for the gradient stops.
 const INITIAL_STOPS: usize = 512;
 const INITIAL_ELEMENTS: usize = 1024;
+
+/// What a region behind the surface is wanted for: glass the compositor
+/// blurs, glass that bends it (captured), or a shader that reads it (captured,
+/// and never blurred in its place while there is no capture yet: what it draws
+/// is its own business).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Behind {
+    Blur,
+    Lens,
+    Read,
+}
 
 /// The draw list turned into what the GPU paints: evaluated shapes and
 /// elements with their box. It is recomposed every frame; it is a few hundred
@@ -107,8 +118,8 @@ pub struct DrawList {
     /// And which edges it is attached to: nothing is reported against those.
     attached_edges: [bool; 4],
     /// Where there is glass this frame, in strips of the scene plane: what the
-    /// compositor is asked to blur.
-    pub glass_regions: Vec<([f32; 4], bool)>,
+    /// compositor is asked to blur, or what is captured to bend or to read.
+    pub glass_regions: Vec<([f32; 4], Behind)>,
     /// The strips of each glass shape, at the origin, keyed by what makes it
     /// what it is except where it is: while it only moves, they are not searched again.
     glass_cache: std::collections::HashMap<[u32; 12], (Vec<[f32; 4]>, bool)>,
@@ -791,7 +802,7 @@ impl DrawList {
                 cached.1 = true;
                 cached.0.clone()
             };
-            self.glass_regions.extend(strips.into_iter().map(|f| [(f[0] + ox).max(cut[0]), (f[1] + oy).max(cut[1]), (f[2] + ox).min(cut[2]), (f[3] + oy).min(cut[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]).map(|f| (f, lens)));
+            self.glass_regions.extend(strips.into_iter().map(|f| [(f[0] + ox).max(cut[0]), (f[1] + oy).max(cut[1]), (f[2] + ox).min(cut[2]), (f[3] + oy).min(cut[3])]).filter(|f| f[2] > f[0] && f[3] > f[1]).map(|f| (f, if lens { Behind::Lens } else { Behind::Blur })));
         }
     }
 
@@ -1445,7 +1456,7 @@ impl DrawList {
                     let b = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
                     // What is behind it is captured like a lens's: its box.
                     if *behind {
-                        self.glass_regions.push((b, true));
+                        self.glass_regions.push((b, Behind::Read));
                         self.glass_marks.push(self.element_count() as u32);
                     }
                     let mut v = [0f32; 8];
@@ -2086,18 +2097,9 @@ impl Gpu {
         let pipeline_layout = Self::pipeline_layout(&device);
         let base = crate::shaders::generate(&[]);
         let [pipeline, particles, screen, multiply] = Self::build_pipeline(&device, &pipeline_layout, format, &base).expect("pleamar's own shader does not compile");
-        // A single atlas for glyphs and images. 2048² in RGBA is 16 MB.
-        let atlas = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("atlas"),
-            size: wgpu::Extent3d { width: ATLAS_SIZE, height: ATLAS_SIZE, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let atlas_view = atlas.create_view(&Default::default());
+        // A single atlas for glyphs and images. 2048² in RGBA is 16 MB; it
+        // grows taller only when what is seen does not fit (`fit_atlas`).
+        let (atlas, atlas_view) = Self::atlas_texture(&device, ATLAS_SIZE);
         let (windows, windows_view) = Self::windows_texture(&device, (1, 1, 1));
         let scene_group = Self::build_scene_group(&device, &pipeline, &shapes_buffer, &elements_buffer, &points_buffer, &stops_buffer, &atlas_view, &sampler, &windows_view);
         let limit = device.limits().max_storage_buffer_binding_size as usize / 4;
@@ -2310,6 +2312,43 @@ impl Gpu {
     /// is kept in memory until something is submitted, and this submits nothing else.
     pub fn flush(&self) {
         self.queue.submit(None::<wgpu::CommandBuffer>);
+    }
+
+    fn atlas_texture(device: &wgpu::Device, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+        let atlas = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("atlas"),
+            size: wgpu::Extent3d { width: ATLAS_SIZE, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = atlas.create_view(&Default::default());
+        (atlas, view)
+    }
+
+    /// The tallest atlas this card allows.
+    pub fn atlas_most(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d.min(ATLAS_MOST)
+    }
+
+    /// The atlas as tall as the workshop paints it, with what it already had:
+    /// the pieces keep their place, and their `uv` is in pixels.
+    pub fn fit_atlas(&mut self, height: u32) {
+        let have = self.atlas.height();
+        if height <= have {
+            return;
+        }
+        let (atlas, view) = Self::atlas_texture(&self.device, height);
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_texture(self.atlas.as_image_copy(), atlas.as_image_copy(), wgpu::Extent3d { width: ATLAS_SIZE, height: have, depth_or_array_layers: 1 });
+        self.queue.submit([enc.finish()]);
+        self.atlas = atlas;
+        self.atlas_view = view;
+        self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view);
+        println!("render · the atlas is now {ATLAS_SIZE}×{height}");
     }
 
     pub fn upload_atlas(&self, pending_upload: &mut Vec<(AtlasSlot, Vec<u8>)>) {

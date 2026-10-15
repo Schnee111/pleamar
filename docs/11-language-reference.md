@@ -839,7 +839,10 @@ must be nothing of ours that covers it: where something of the scene is solid,
 it comes back unknown. And the box itself should not cover it all either —an
 alpha of 0.88, like the lens— or the next frame does not know what is behind
 it. It is read with the same capture as the glass, so the same thing applies:
-on a compositor that does not let the screen be captured, it is always unknown.
+on a compositor that does not let the screen be captured, it is always unknown. Until
+the first capture of its box arrives it is unknown too, and nothing is put in
+its place: a glass with a lens is blurred by the compositor meanwhile, a shader
+draws what it draws with what it knows.
 
 **`z:` — what goes on top.** Groups with `z:` that are side by side (in the
 same group, or loose in the scene, even from different iterations of a
