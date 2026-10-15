@@ -1697,6 +1697,8 @@ pub enum Effect {
     /// fires, so it can depend on what is going on: the bounce of
     /// a countdown decreases with the number that is left.
     Impulse(PropId, Expr),
+    /// A ring of light from the centre of a zone, without pressing it.
+    Ripple(ZoneId),
     Gesture(GestureId),
     /// Put the text cursor in a field, or take it away.
     FocusField(Option<TextId>),

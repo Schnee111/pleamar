@@ -2014,6 +2014,7 @@ pub fn run(
         last = now;
         let t_total = (now - start).as_secs_f32();
         let mut effects: Vec<Effect> = Vec::new();
+        let mut ripple_target = None;
         let mut keyboard_changed = false;
         let mut appointments: Vec<Instant> = Vec::new();
 
@@ -2735,6 +2736,7 @@ pub fn run(
                         let v = v.eval(Ctx { props: &props, facts: &facts, seen: None });
                         props[p.0 as usize].v += v;
                     }
+                    Effect::Ripple(z) => ripple_target = Some(z),
                     Effect::Gesture(g) => gestures_asked.push(g.0 as usize),
                     Effect::Window(action, which) => {
                         let slot = which.eval(Ctx { props: &props, facts: &facts, seen: None }).round();
@@ -3781,6 +3783,15 @@ pub fn run(
             let c = thread_cpu_ms();
             prof_cpu[3] += c - prof_c;
             prof_c = c;
+        }
+        // Resolve after layout: a tab may have appeared or moved in this very frame.
+        if let Some(z) = ripple_target.filter(|_| !op.reduced_motion) {
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            if let Some(p) = ripple_origin(&scene, z, c, &draw.hidden)
+                .filter(|p| sheets.iter().any(|s| s.open && crate::agent::inside_box(s.view.bounds(), *p)))
+            {
+                ripple = Some((p, Instant::now()));
+            }
         }
         let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some();
         // A window that drew something new changes what its box covers, and nothing else.
@@ -5186,6 +5197,63 @@ struct ComposeMemo {
     order: Option<Vec<usize>>,
     selected: Option<(usize, usize, usize)>,
     signal_times: Vec<f32>,
+}
+
+fn ripple_origin(scene: &Scene, target: ZoneId, c: Ctx, hidden: &[bool]) -> Option<(f32, f32)> {
+    let zone = &scene.zones[target.0 as usize];
+    if hidden.get(zone.at).copied().unwrap_or(false) || !zone.active.is_true(c) {
+        return None;
+    }
+    let [x1, y1, x2, y2] = zone.bounds(c)?;
+    let p = ((x1 + x2) * 0.5, (y1 + y2) * 0.5);
+    let mut within = zone.within;
+    while let Some(id) = within {
+        let viewport = &scene.zones[id.0 as usize];
+        if !viewport.contains(c, p.0, p.1) { return None; }
+        within = viewport.within;
+    }
+    (p.0.is_finite() && p.1.is_finite()).then_some(p)
+}
+
+#[cfg(test)]
+mod ripple_tests {
+    use super::*;
+
+    #[test]
+    fn feedback_targets_each_component_in_its_current_layout() {
+        let (mut scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/ripple.plm")).unwrap();
+        let mut props: Vec<Animated> = scene.props.iter().map(|(_, x, s)| Animated::at(*x, *s)).collect();
+        let facts: Vec<f32> = scene.facts.iter().map(|(_, x)| *x).collect();
+        for b in &scene.behaviors {
+            if let Behavior::Bind { prop, to } = b {
+                props[prop.0 as usize].x = to.eval(Ctx { props: &props, facts: &facts, seen: None });
+            }
+        }
+        let targets: Vec<ZoneId> = scene.rules.iter().filter_map(|r| match r.effects.first() {
+            Some(Effect::Ripple(z)) => Some(*z),
+            _ => None,
+        }).collect();
+        // Two rules in each copy target its own zone, including one with a payload.
+        assert_eq!(targets.len(), 6);
+        for (i, pair) in targets.chunks(2).enumerate() {
+            assert_eq!(pair[0], pair[1]);
+            let c = Ctx { props: &props, facts: &facts, seen: None };
+            assert_eq!(ripple_origin(&scene, pair[0], c, &[]), Some((130.0 + i as f32 * 184.0, 120.0)));
+        }
+        let shift = scene.props.iter().position(|p| p.0 == "shift").unwrap();
+        props[shift].x = 30.0;
+        let c = Ctx { props: &props, facts: &facts, seen: None };
+        let target = targets[0];
+        assert_eq!(ripple_origin(&scene, target, c, &[]), Some((150.0, 120.0)));
+        let mut hidden = vec![false; scene.instrs.len() + 1];
+        hidden[scene.zones[target.0 as usize].at] = true;
+        assert_eq!(ripple_origin(&scene, target, c, &hidden), None);
+        scene.zones[target.0 as usize].within = Some(targets[2]);
+        assert_eq!(ripple_origin(&scene, target, c, &[]), None);
+        scene.zones[target.0 as usize].within = None;
+        scene.zones[target.0 as usize].active = Expr::K(0.0);
+        assert_eq!(ripple_origin(&scene, target, c, &[]), None);
+    }
 }
 
 #[cfg(test)]

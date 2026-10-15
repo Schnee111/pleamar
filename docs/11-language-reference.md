@@ -123,7 +123,7 @@ trigger      = "press" [ "right" | "middle" ] zone_ref | "release" zone_ref | "s
              | name ;                                (* an event *)
 key          = name { "+" name } ;                   (* Escape · Ctrl+k · Super+Alt+s *)
 effect       = transition | name "=" expr | "toggle" name
-             | "emit" name [ "(" expr ")" ] | "impulse" name expr
+             | "emit" name [ "(" expr ")" ] | "impulse" name expr | "ripple" name
              | "play" name | "focus" name | "blur" ;
 
 behaviour    = "blink" name "every" duration [ ".." duration ] "for" duration
@@ -1348,8 +1348,26 @@ scene Told {
 | `toggle fact` | |
 | `emit event` · `emit event(expr)` | with a payload, which reaches the logic and the rules that read it with `on event(v)` |
 | `impulse prop -620` · `impulse pop left * 5` | a shove: it adds to the velocity of the spring. The amount is evaluated on firing, so it can depend on what is going on: a countdown's bounce shrinks with the number left |
+| `ripple zone` | a ring of light from the centre of that zone through the glass, without a press or a pointer move; nothing if the zone is hidden, inactive or off screen, or with reduced motion. A new ripple replaces the previous one |
 | `play gesture` | it asks for it; it will be granted or not, depending on its class |
 | `focus field` · `blur` | gives the writing cursor to an `input`, or takes it away |
+
+A state change can give the same glass feedback as a click, entirely in the
+renderer. In a workspace tab, for example:
+
+```plm
+scene Ripple {
+    surface { size: 240, 64 }
+    fact selected = false
+    body { color: #24332d; glass: 100%; box { from: 0, 0; size: 240, 64; corner: 16 } }
+    zone box tab { from: 16, 12; size: 80, 40 }
+    on change selected while selected { ripple tab }
+}
+```
+
+The zone's centre follows its current layout and transforms. The effect does
+not fire its `on press` rules. The logic can report the state as usual, or a
+shortcut can say `pleamar --say ripple "fact selected true"`.
 
 ## 14. Movement that carries itself
 
@@ -1530,7 +1548,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
-effects: toggle emit impulse play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock
+effects: toggle emit impulse ripple play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
@@ -1538,7 +1556,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look gesture posture import scene library include part language
+documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
 services: clock clock.seconds audio battery brightness network bluetooth media window thumbnails workspaces apps tray notifications notification_history polkit
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
