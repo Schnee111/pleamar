@@ -583,6 +583,9 @@ pub fn run(
     // Which edge each surface is attached to right now, so as not to ask for it twice.
     let mut levels_set: Vec<crate::scene::Level> = Vec::new();
     let mut reserves_set: Vec<i32> = Vec::new();
+    // How many frames a second at most right now: `rate:`, or its lower one
+    // while its `while` holds. 0 is the monitor's.
+    let mut rate_now: u32 = 0;
     let mut anchors_set: Vec<crate::scene::SurfaceAnchor> = Vec::new();
     let mut layers_seen: u64 = 0;
     // The "this does not compile" banner, and the good scene with it on top.
@@ -1181,7 +1184,7 @@ pub fn run(
                                 .collect(),
                             windows: nest_windows.iter().filter(|w| !w.pieces.is_empty()).count(),
                             scene: format!("{} instructions, {} properties, {} rules, {} zones", scene.instrs.len(), scene.props.len(), scene.rules.len(), scene.zones.len()),
-                            rate: scene.surface().max_fps,
+                            rate: rate_now,
                         }),
                         None => "? it was not measuring: `probe start` first".into(),
                     };
@@ -4053,6 +4056,10 @@ pub fn run(
                 crate::platform::relayer(k, wants);
             }
         }
+        rate_now = match &scene.surface().rate_while {
+            Some((low, when)) if when.is_true(Ctx { props: &props, facts: &facts, seen: None }) => *low,
+            _ => scene.surface().max_fps,
+        };
         // And the room it keeps, while something holds (`reserve: n while …`).
         if reserves_set.len() != scene.surfaces.len() {
             reserves_set = scene.surfaces.iter().map(|s| if s.reserve_while.is_some() { -1 } else { s.exclusive_zone }).collect();
@@ -4121,7 +4128,7 @@ pub fn run(
                 // With `rate:`, the scene decides the step and not the monitor: a bar
                 // that breathes does not need 165 frames per second, and painting them is what
                 // costs. Never faster than the screen, which would be no use.
-                let mhz = match scene.surface().max_fps {
+                let mhz = match rate_now {
                     0 => mhz,
                     r => mhz.min(r as i32 * 1000),
                 };
@@ -4620,8 +4627,8 @@ pub fn run(
             // late teaches it that the screen gives 28 ms and then it is never
             // late. It is compared with the monitor's real refresh.
             let mut real = sheets.iter().find(|l| l.drives_pace).map_or(16.7, |l| 1_000_000.0 / l.mhz.max(1) as f32);
-            if scene.surface().max_fps > 0 {
-                real = real.max(1000.0 / scene.surface().max_fps as f32);
+            if rate_now > 0 {
+                real = real.max(1000.0 / rate_now as f32);
             }
             cycle.watch(real);
         }
