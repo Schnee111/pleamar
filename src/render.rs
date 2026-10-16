@@ -4450,7 +4450,10 @@ pub fn run(
             }
         }
         if painted + up_to_date == 0 {
-            std::thread::sleep(Duration::from_millis(8));
+            // Nothing could be painted —the screen has not handed a buffer back
+            // yet—: try again soon. Eight milliseconds were more than a whole
+            // frame at 165 Hz, and every one of these naps lost one.
+            std::thread::sleep(Duration::from_secs_f32((period_ms / 4.0).clamp(1.0, 8.0) / 1000.0));
         } else if painted > 0 && first_frame {
             first_frame = false;
             println!("render · first frame {} ms after starting", op.start_time.elapsed().as_millis());
