@@ -15,6 +15,13 @@ pub const MAX_LAYERS: usize = 64;
 /// How many layers the groups that do not reach each other are shared out
 /// among, to be painted together (see `share_layers`).
 const LAYER_SLOTS: usize = 4;
+/// The most the windows' texture is let take on the card: every layer is as
+/// big as the biggest window, so a huge one is that many times its size.
+/// `PLEAMAR_WINDOWS_BUDGET_MB` says another (a card with little memory, a test).
+fn windows_budget() -> u64 {
+    static BUDGET: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *BUDGET.get_or_init(|| std::env::var("PLEAMAR_WINDOWS_BUDGET_MB").ok().and_then(|v| v.parse::<u64>().ok()).filter(|m| *m > 0).map_or(1 << 30, |m| m << 20))
+}
 /// How many frames painted without groups with opacity until their layers are given back.
 const IDLE_LAYER_FRAMES: u32 = 300;
 /// How many frames a surface keeps what it took of its own painting for its
@@ -2069,6 +2076,14 @@ impl Gpu {
                 (adapter, dq)
             }
         };
+        // The card out of memory —a texture too big for what it has free— is
+        // said and lived through: what asked for it is not drawn. wgpu's own
+        // answer is to panic, and a window manager's whole session went down
+        // with it. Every other error still stops the program, as it did.
+        device.on_uncaptured_error(std::sync::Arc::new(|e: wgpu::Error| match e {
+            wgpu::Error::OutOfMemory { .. } => eprintln!("render · the card is out of memory: {e}"),
+            other => panic!("wgpu error: {other}"),
+        }));
         let (format, alpha, non_blocking) = match first {
             Some(first) => {
                 let caps = first.get_capabilities(&adapter);
@@ -2530,6 +2545,7 @@ impl Gpu {
     }
 
     fn windows_texture(device: &wgpu::Device, (w, h, n): (u32, u32, u32)) -> (wgpu::Texture, wgpu::TextureView) {
+        // (Its size is checked by whoever grows it: `window_room`.)
         let t = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("windows"),
             size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: n },
@@ -2558,8 +2574,31 @@ impl Gpu {
         }
         // Grown with room to spare, so that a window being stretched does not remake it every frame.
         let grow = |have: u32, want: u32| if want > have { want.div_ceil(256) * 256 } else { have }.min(max);
-        let dims = (grow(dw.max(1), w), grow(dh.max(1), h), (layer + 1).max(dn));
+        let mut dims = (grow(dw.max(1), w), grow(dh.max(1), h), (layer + 1).max(dn));
+        // Every layer is as big as the biggest window, so one huge buffer is
+        // that, times every layer: a window sent from a phone's monitor to a
+        // desk's, its first frame still at the phone's scale of 2.65, asked
+        // for gigabytes, the card said no, and the session went down. Past
+        // the budget the layers grow less: that window is cut for a frame or
+        // two, until it draws at its new size, and nothing else happens.
+        let bytes = |d: (u32, u32, u32)| d.0 as u64 * d.1 as u64 * d.2 as u64 * 4;
+        if bytes(dims) > windows_budget() {
+            let k = (windows_budget() as f64 / bytes(dims) as f64).sqrt();
+            let fit = |side: u32, had: u32| ((side as f64 * k) as u32 / 256 * 256).max(had).max(256).min(side);
+            dims = (fit(dims.0, dw), fit(dims.1, dh), dims.2);
+            // Already as big as it may be: it stays, and the picture is cut.
+            if dims == self.windows_dims {
+                return false;
+            }
+        }
+        // And if the card cannot make it all the same, the texture there was stays.
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let (t, v) = Self::windows_texture(&self.device, dims);
+        if let Some(e) = pollster::block_on(scope.pop()) {
+            eprintln!("render · the windows' texture cannot grow to {}×{}×{} ({} MB): {e}; it stays {dw}×{dh}×{dn}", dims.0, dims.1, dims.2, bytes(dims) >> 20);
+            return false;
+        }
+        eprintln!("render · the windows' texture grows to {}×{}×{} ({} MB) for a picture of {w}×{h}", dims.0, dims.1, dims.2, bytes(dims) >> 20);
         self.windows = t;
         self.windows_view = v;
         self.windows_dims = dims;
@@ -2646,10 +2685,11 @@ impl Gpu {
     /// What a window of the scene's compositor drew, to its layer. Returns true
     /// if the texture had to grow and the other layers were lost.
     pub fn upload_window(&mut self, layer: u32, size: (u32, u32), pixels: &[u8]) -> bool {
-        let max = self.device.limits().max_texture_dimension_2d;
-        let (w, h) = (size.0.min(max), size.1.min(max));
         let remade = self.window_room(layer, size);
-        if w > 0 && h > 0 && pixels.len() >= (size.0 * size.1 * 4) as usize {
+        // What the texture holds of it: all of it, unless it could not grow enough.
+        let (dw, dh, dn) = self.windows_dims;
+        let (w, h) = (size.0.min(dw), size.1.min(dh));
+        if layer < dn && w > 0 && h > 0 && pixels.len() >= (size.0 * size.1 * 4) as usize {
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo { texture: &self.windows, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
                 pixels,
@@ -2683,8 +2723,11 @@ impl Gpu {
         if !self.dmabufs.contains_key(&buffer) {
             return Err("that buffer was never read".into());
         }
-        let max = self.device.limits().max_texture_dimension_2d;
-        let copy = wgpu::Extent3d { width: size.0.min(max).max(1), height: size.1.min(max).max(1), depth_or_array_layers: 1 };
+        let (dw, dh, dn) = self.windows_dims;
+        if layer >= dn {
+            return Ok(remade);
+        }
+        let copy = wgpu::Extent3d { width: size.0.min(dw).max(1), height: size.1.min(dh).max(1), depth_or_array_layers: 1 };
         // Not now: it goes in the same work as the next painting, which is
         // what reads it. A submission of its own cost as much as the painting's.
         // Video and RGBA are painted into it; BGRA is copied.
