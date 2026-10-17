@@ -213,6 +213,8 @@ struct Typesetter {
     /// The last frame of each live window drawn (`thumbnails:3`, at that size):
     /// which version, and where. Asked for again with nothing new, it is left as it is.
     frames: HashMap<LiveKey, (u64, AtlasSlot)>,
+    /// The scenes' own fonts already read.
+    fonts_read: HashSet<std::path::PathBuf>,
 }
 
 impl Typesetter {
@@ -220,7 +222,7 @@ impl Typesetter {
         let t0 = std::time::Instant::now();
         let fonts = FontSystem::new();
         println!("text   · {} system fonts in {} ms", fonts.db().len(), t0.elapsed().as_millis());
-        Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), scale: 1.0, exhausted: false, frames: HashMap::new() }
+        Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), pending_fit: Vec::new(), scale: 1.0, exhausted: false, frames: HashMap::new(), fonts_read: HashSet::new() }
     }
 
     /// When the scale changes, everything painted stops being valid.
@@ -509,6 +511,19 @@ impl Typesetter {
                 self.clear(scale);
                 return None;
             }
+            Job::Fonts(list) => {
+                for path in list {
+                    if self.fonts_read.insert(path.clone()) {
+                        let before = self.fonts.db().len();
+                        if let Err(e) = self.fonts.db_mut().load_font_file(&path) {
+                            eprintln!("text   · {}: {e}", path.display());
+                        } else if self.fonts.db().len() == before {
+                            eprintln!("text   · {}: no font in it", path.display());
+                        }
+                    }
+                }
+                return None;
+            }
             Job::Limit(most) => {
                 self.shelves.most = most.clamp(ATLAS_SIZE, ATLAS_MOST);
                 return None;
@@ -573,6 +588,8 @@ enum Job {
     /// The tallest the card lets the atlas be.
     Limit(u32),
     Rebuild(WorkingSet, Vec<(ImageSource, (u32, u32))>, u32),
+    /// Fonts a scene brings with it: read once, and kept for the next scenes.
+    Fonts(Vec<std::path::PathBuf>),
 }
 
 /// What the workshop hands back, with whatever it painted along the way.
@@ -674,9 +691,15 @@ impl Texts {
         }
     }
 
+    /// Whether that image is pixel art (`pixels "…"`): drawn bigger, each of
+    /// its pixels stays a square.
+    pub fn is_pixel_art(&self, k: usize) -> bool {
+        matches!(self.sources.get(k), Some((ImageSource::Pixels(_), _)))
+    }
+
     /// New scene or new scale: new atlas. What came before stops being valid, and
     /// with it whatever was being shown.
-    pub fn reset(&mut self, scale: f32, images: &[(ImageSource, (u32, u32))]) {
+    pub fn reset(&mut self, scale: f32, images: &[(ImageSource, (u32, u32))], fonts: &[std::path::PathBuf]) {
         self.generation += 1;
         self.scale = scale;
         self.layouts.clear();
@@ -695,6 +718,10 @@ impl Texts {
         self.exhausted = false;
         self.rebuilding = false;
         self.too_large = None;
+        // Before anything is laid out with them.
+        if !fonts.is_empty() {
+            let _ = self.to_workshop.send(Job::Fonts(fonts.to_vec()));
+        }
         let _ = self.to_workshop.send(Job::Clear(scale));
         if !images.is_empty() {
             let _ = self.to_workshop.send(Job::Images(images.to_vec(), self.generation));
@@ -1260,7 +1287,7 @@ mod tests {
         let mut t = Typesetter::new();
         let expected = t.lay_out(&spanish()).glyphs.len();
         t.clear(1.0);
-        texts.reset(1.0, &[(ImageSource::Live(crate::scene::TextId(0)), (640, 360))]);
+        texts.reset(1.0, &[(ImageSource::Live(crate::scene::TextId(0)), (640, 360))], &[]);
         deliver(&mut t, &mut texts, &jobs);
         let initial = texts.generation;
         for i in 0..48 {
@@ -1296,7 +1323,7 @@ mod tests {
         texts.exhausted = true;
         texts.end_frame();
         let old = t.work(jobs.recv().unwrap()).unwrap();
-        texts.reset(1.25, &[]);
+        texts.reset(1.25, &[], &[]);
         texts.receive(old);
         assert!(texts.layouts.is_empty() && texts.pending_upload.is_empty());
         deliver(&mut t, &mut texts, &jobs);

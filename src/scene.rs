@@ -1808,6 +1808,8 @@ pub struct Scene {
     pub texts: Vec<(&'static str, String)>,
     /// Each image, and the largest logical size it is painted at.
     pub images: Vec<(ImageSource, (u32, u32))>,
+    /// Fonts it brings with it (`font file "…"`), besides the system's.
+    pub fonts: Vec<std::path::PathBuf>,
     pub facts: Vec<(&'static str, f32)>,
     /// Name, and whether besides the scene it also reaches the logic.
     pub signals: Vec<(&'static str, bool)>,

@@ -655,7 +655,8 @@ impl DrawList {
 
     /// A piece of the atlas —a glyph, an image— placed on screen. With
     /// `tint`, its alpha is a mask painted in that colour.
-    fn sprite(&mut self, d: [f32; 4], uv: [f32; 4], alpha: f32, tint: Option<[f32; 3]>, text: bool, affine: Affine, clips: &[(usize, [f32; 4])]) {
+    #[allow(clippy::too_many_arguments)]
+    fn sprite(&mut self, d: [f32; 4], uv: [f32; 4], alpha: f32, tint: Option<[f32; 3]>, text: bool, sharp: bool, affine: Affine, clips: &[(usize, [f32; 4])]) {
         let bounds = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
         self.element(1.0, [bounds[0] - 1.0, bounds[1] - 1.0, bounds[2] + 1.0, bounds[3] + 1.0], clips, |e| {
             affine.encode(&mut e[44..52]);
@@ -663,6 +664,9 @@ impl DrawList {
             if let Some(rgb) = tint {
                 e[2] = if text { 2.0 } else { 1.0 };
                 e[8..11].copy_from_slice(&rgb);
+            }
+            if sharp {
+                e[12] = 1.0;
             }
             e[36..40].copy_from_slice(&d);
             e[40..44].copy_from_slice(&uv);
@@ -1398,7 +1402,9 @@ impl DrawList {
                         let (w, h) = ((uv[2] - uv[0]) / columns, (uv[3] - uv[1]) / rows);
                         uv = [uv[0] + x * w, uv[1] + y * h, uv[0] + (x + 1.0) * w, uv[1] + (y + 1.0) * h];
                     }
-                    self.sprite(d, uv, a, rgb, false, affine, &clips);
+                    // Pixel art stays pixels however a group enlarges it.
+                    let sharp = tip.is_pixel_art(image.0 as usize);
+                    self.sprite(d, uv, a, rgb, false, sharp, affine, &clips);
                 }
                 Instr::Window { slot, target, alpha, ask } => {
                     let a = alpha.eval(c).clamp(0.0, 1.0) * mult;
@@ -1537,7 +1543,7 @@ impl DrawList {
                         let (tx, ty) = (((x0 - scroll) * s).round() / s, (y0 * s).round() / s);
                         for g in &m.glyphs {
                             let d = [tx + g.rect[0], ty + g.rect[1], g.rect[2], g.rect[3]];
-                            self.sprite(d, g.uv, if empty { a * 0.4 } else { a }, if g.colored { None } else { Some(rgb) }, true, affine, &clips);
+                            self.sprite(d, g.uv, if empty { a * 0.4 } else { a }, if g.colored { None } else { Some(rgb) }, true, false, affine, &clips);
                         }
                     }
                     if let Some(v) = mine.filter(|v| v.visible) {
@@ -1614,7 +1620,7 @@ impl DrawList {
                     let Some(fx) = fx else {
                         for g in &m.glyphs {
                             let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
-                            self.sprite(d, g.uv, a, if g.colored { None } else { Some(rgb) }, true, affine, &clips);
+                            self.sprite(d, g.uv, a, if g.colored { None } else { Some(rgb) }, true, false, affine, &clips);
                         }
                         continue;
                     };

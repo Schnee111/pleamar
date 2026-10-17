@@ -664,6 +664,18 @@ scene Walk {
 }
 ```
 
+**A font of its own: `font file "fonts/pixel.ttf"`.** A scene can bring the
+lettering it is drawn with —a game its pixel font, a theme its face— instead of
+asking whoever runs it to install it. The file (TrueType or OpenType, `.ttf`,
+`.otf` or `.ttc`) is read where the scene is, and its family is then used by
+name like any installed one: `family: "Press Start 2P"`. Nothing is put in the
+system, and the system's fonts are all still there.
+
+```
+font file "fonts/PressStart2P-Regular.ttf"
+text "1UP" { at: 16, 16; size: 8; family: "Press Start 2P"; color: #fcfcfc }
+```
+
 **A figure is an svg read as geometry, not as a stamp.** An image is rasterised
 into an atlas: it shows, but it is a sticker —it melts into nothing, it cannot
 be tinted by parts nor animated by layers, and scaling it is pixels—. `figure
@@ -1531,8 +1543,8 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.4
-statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
-library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
+statements: surface permissions model service spring prop pose fact event text image figure font shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
+library: let spring component permissions fact text model service event image figure font shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate captures agent
 properties.permissions: run services
 properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple frost smoke milk active show cursor carries grow label agent role value checked selected handle
@@ -1565,7 +1577,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
+documented: translations surface permissions model service spring prop pose fact event text image figure font particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
 services: clock clock.seconds audio battery brightness network bluetooth media window thumbnails workspaces apps tray notifications notification_history polkit
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date

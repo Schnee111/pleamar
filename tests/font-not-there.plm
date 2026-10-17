@@ -1,0 +1,8 @@
+// expect: error «that font cannot be read»
+// A scene brings its own font with `font file`: one that is not there is said, with where.
+language 0.4
+scene FontNotThere {
+    surface { size: 200, 40 }
+    font file "fonts/nowhere.ttf"
+    text "1UP" { at: 8, 8; size: 16; family: "Press Start 2P" }
+}

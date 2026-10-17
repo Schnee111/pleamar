@@ -773,6 +773,7 @@ fn pass_of(e: &Entry) -> u8 {
             "surface" | "permissions" | "model" | "service" | "spring" | "prop" | "pose" | "fact" | "event" | "measure" | "component" | "windows" => 0,
             // An image or a figure is read once: they belong to the scene, not to each copy.
             "text" | "image" | "figure" | "shader" if is_assignment => 0,
+            "font" => 0,
             "let" | "layer" => 1,
             _ => 2,
         },
@@ -1972,6 +1973,29 @@ impl<'a> Compiler<'a> {
                     }
                     self.e.attachments.push(path);
                     self.figures.insert(name, fig);
+                }
+                // `font file "fonts/pixel.ttf"`: a font the scene brings with it,
+                // used by its family's name as if it were installed. A game or a
+                // theme carries its lettering, and nothing is put in the system.
+                "font" => {
+                    if !c.word("file") {
+                        return c.error("a font comes from a file: `font file \"fonts/pixel.ttf\"`, and is then used by its family's name");
+                    }
+                    let written = std::path::PathBuf::from(c.string()?);
+                    let dir = self.dirs.get(n.line / super::PER_FILE);
+                    let path = match dir {
+                        Some(k) if written.is_relative() => k.join(written),
+                        _ => written,
+                    };
+                    let mut head = [0u8; 4];
+                    std::io::Read::read_exact(&mut std::fs::File::open(&path).map_err(|e| CompileError::at(n.line, n.col, format!("that font cannot be read: {e}")))?, &mut head)
+                        .map_err(|e| CompileError::at(n.line, n.col, format!("that font cannot be read: {e}")))?;
+                    if !matches!(&head, [0, 1, 0, 0] | b"OTTO" | b"true" | b"ttcf") {
+                        return Err(CompileError::at(n.line, n.col, "that is not a font: a TrueType or OpenType file (.ttf, .otf, .ttc)".to_string()));
+                    }
+                    if !self.e.fonts.contains(&path) {
+                        self.e.fonts.push(path);
+                    }
                 }
                 // `shader aurora = file "aurora.wgsl"`: a function of its own in
                 // WGSL that paints a box. Read and checked now, like an svg.

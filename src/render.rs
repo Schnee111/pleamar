@@ -3444,7 +3444,7 @@ pub fn run(
         // others see them reduced, which shows much less than enlarged.
         let finest = sheets.iter().map(|l| l.scale).fold(1.0f32, f32::max);
         if atlas_stale || (finest - letters.scale()).abs() > 0.001 {
-            letters.reset(finest, &scene.images);
+            letters.reset(finest, &scene.images, &scene.fonts);
             atlas_stale = false;
         }
         // It is composed even if there is nowhere to paint yet: that way the workshop gets on with

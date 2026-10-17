@@ -198,6 +198,21 @@ fn to_local(p: vec2<f32>, t0: vec4<f32>, t1: vec4<f32>) -> vec2<f32> {
     return vec2<f32>(dot(t0.xy, p), dot(t0.zw, p)) + t1.xy;
 }
 
+/// Pixel art made bigger, however much a group scales it: inside each of its
+/// pixels the same texel, and only across the one screen pixel where two of
+/// them meet are they blended —sharp at any size, and even at sizes that are
+/// not a whole number of times its own—. How many texels a screen pixel spans
+/// comes from the element's box and its transform: derivatives are not to be
+/// had in a branch that differs from element to element.
+fn sharp_texel(el: Element, at: vec2<f32>) -> vec2<f32> {
+    let per_local = abs(el.uv.zw - el.uv.xy) / max(el.dest.zw, vec2<f32>(0.0001));
+    let per_px = max(per_local * vec2<f32>(length(el.t0.xz), length(el.t0.yw)), vec2<f32>(0.0001));
+    let p = at - 0.5;
+    let i = floor(p);
+    let g = clamp((p - i - 0.5) / per_px + 0.5, vec2<f32>(0.0), vec2<f32>(1.0));
+    return i + g + 0.5;
+}
+
 fn rotate_point(p: vec2<f32>, pivot: vec2<f32>, angle: f32) -> vec2<f32> {
     if (angle == 0.0) { return p; }
     let q = p - pivot;
@@ -370,7 +385,9 @@ fn fs(e: VertexOut) -> @location(0) vec4<f32> {
             if (el.header.z < -1.5) { return vec4<f32>(w.rgb, 1.0) * alpha; }
             return w * alpha;
         }
-        let t = textureSampleLevel(atlas, atlas_sampler, mix(el.uv.xy, el.uv.zw, uv01) / vec2<f32>(textureDimensions(atlas)), 0.0);
+        var at = mix(el.uv.xy, el.uv.zw, uv01);
+        if (el.color1.x > 0.5) { at = sharp_texel(el, at); }
+        let t = textureSampleLevel(atlas, atlas_sampler, at / vec2<f32>(textureDimensions(atlas)), 0.0);
         // Tinted: the piece is a mask —a letter (2), a symbolic icon (1)— and the element provides the colour.
         // A letter (2) gets its edges firmed up. Blended as they are, in sRGB,
         // a stem that falls across two pixels —most of them: the letters are

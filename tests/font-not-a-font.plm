@@ -1,0 +1,7 @@
+// expect: error «that is not a font»
+// A file that is not TrueType or OpenType is turned away before anything is laid out with it.
+language 0.4
+scene FontNotAFont {
+    surface { size: 200, 40 }
+    font file "font-not-a-font.plm"
+}
