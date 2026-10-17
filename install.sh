@@ -241,6 +241,23 @@ else
     ln -sf "$src/marea-plm/marea" "$bin/marea"
     # Your folder, the first time; never over what is there.
     "$bin/pleamar-wm" init > /dev/null
+    # The desktop's wallpaper is painted by swaybg (autostart). Without it
+    # pleamar-wm's session works, but its desk is black: said, and offered.
+    if ! command -v swaybg > /dev/null; then
+        say "pleamar-wm paints its wallpaper with swaybg, which is not installed: without it the desktop is black"
+        if command -v pacman > /dev/null; then hint="sudo pacman -S --needed swaybg"
+        elif command -v apt > /dev/null; then hint="sudo apt install swaybg"
+        elif command -v dnf > /dev/null; then hint="sudo dnf install swaybg"
+        elif command -v zypper > /dev/null; then hint="sudo zypper install swaybg"
+        else hint="your distribution's swaybg"
+        fi
+        echo "    $hint"
+        if [ -t 0 ] && [ "${hint#sudo }" != "$hint" ]; then
+            printf 'pleamar · run it now? [y/N] '
+            read -r yes
+            case "$yes" in y|Y|s|S) sh -c "$hint" || true ;; esac
+        fi
+    fi
 fi
 # The AI agents you have learn pleamar (and it refreshes itself on updates).
 "$bin/pleamar" --install-skill | sed 's/^/    /'
