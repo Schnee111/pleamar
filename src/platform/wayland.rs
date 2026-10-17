@@ -924,7 +924,7 @@ impl State {
             }
             let layer = self.layers.create_layer_surface(qh, wl, level, Some("pleamar"), Some(output));
             let reserves = p.exclusive_zone > 0 || p.reserve_while.is_some();
-            let mut stretch = Stretch { width: p.width == 0, height: p.height == 0, monitor: if reserves { info.logical_size } else { None }, edges: Anchor::empty() };
+            let mut stretch = Stretch { width: p.width == 0, height: p.height == 0, monitor: if reserves { info.logical_size } else { None }, edges: Anchor::empty(), screen: info.logical_size, extra_height: height - p.height };
             let (edges, size) = placement(p.anchor, stretch, (p.width, height));
             stretch.edges = edges;
             layer.set_anchor(edges);
@@ -932,11 +932,10 @@ impl State {
             let m = p.margin;
             let margin = [m[0] + k as i32 * (height as i32 + 12), m[1], m[2], m[3]];
             layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
-            // Noted down, in case the scene decides to move it to another edge while running.
-            if p.anchor_from.is_some() || p.level_while.is_some() || p.reserve_while.is_some() {
-                if let Some(c) = MOVABLE_LAYERS.get() {
-                    c.placed.lock().unwrap().push((which, layer.clone(), margin, stretch));
-                }
+            // Noted down, in case the scene moves it to another edge while running,
+            // or a reload gives it another size, edge, margin, room or level.
+            if let Some(c) = MOVABLE_LAYERS.get() {
+                c.placed.lock().unwrap().push((which, layer.clone(), margin, stretch));
             }
             layer.set_size(size.0, size.1);
             // With a condition, none until the render says it holds.
@@ -1292,6 +1291,10 @@ struct Stretch {
     monitor: Option<(i32, i32)>,
     /// The edges it holds now, to know along which one it asked for the monitor's size when the monitor changes (`update_output`).
     edges: Anchor,
+    /// Its monitor's size even when it keeps no room, and what the HUD adds
+    /// below the main one: for `reshape`, when a reload asks it to keep some.
+    screen: Option<(i32, i32)>,
+    extra_height: u32,
 }
 
 /// The edges it sticks to, and the size to ask for. A surface as big as the
@@ -1383,6 +1386,40 @@ pub fn reanchor(which: usize, anchor: SurfaceAnchor) {
             layer.set_size(size.0, size.1);
         }
         layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
+        layer.commit();
+        any = true;
+    }
+    if any {
+        let _ = c.connection.flush();
+    }
+}
+
+/// A surface its scene was saved with at another size, edge, margin, room or
+/// level: changed on the live layer, as layer-shell allows, without creating
+/// it again. The compositor answers with the new size, which the surface takes
+/// as it takes any other.
+pub fn reshape(which: usize, p: &crate::scene::Surface) {
+    let Some(c) = MOVABLE_LAYERS.get() else { return };
+    let mut any = false;
+    for (k, layer, margin, stretch) in c.placed.lock().unwrap().iter_mut() {
+        if *k != which {
+            continue;
+        }
+        let reserves = p.exclusive_zone > 0 || p.reserve_while.is_some();
+        stretch.width = p.width == 0;
+        stretch.height = p.height == 0;
+        stretch.monitor = if reserves { stretch.screen } else { None };
+        let (edges, size) = placement(p.anchor, *stretch, (p.width, p.height + stretch.extra_height));
+        stretch.edges = edges;
+        layer.set_anchor(edges);
+        *margin = p.margin;
+        layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
+        layer.set_size(size.0, size.1);
+        // With a condition, the render sets its room as it holds.
+        if p.reserve_while.is_none() {
+            layer.set_exclusive_zone(p.exclusive_zone);
+        }
+        layer.set_layer(layer_of(p.level));
         layer.commit();
         any = true;
     }

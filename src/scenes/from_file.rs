@@ -32,11 +32,39 @@ fn compile(path: &str) -> Result<Scene, String> {
 
 pub struct FromFile {
     path: String,
+    /// What it takes to become a Luau script, and the one it became: a scene
+    /// that started with no logic, plugins or services gets them when a reload
+    /// brings them, instead of only when it starts again.
+    #[allow(dead_code)]
+    grow: Option<(Sender<ToRender>, Sender<Event>, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    grown: Option<Box<dyn Script>>,
 }
 
 impl FromFile {
     pub fn new(path: &str) -> Self {
-        FromFile { path: path.to_owned() }
+        FromFile { path: path.to_owned(), grow: None, grown: None }
+    }
+
+    /// When a reload brings it what only a logic does: started there and then,
+    /// with the scene as it is now.
+    #[cfg(feature = "luau")]
+    fn grow_if_needed(&mut self, e: &Event, c: &mut Context) -> bool {
+        let logic = logic_path_for(&self.path);
+        let wants = match e {
+            Event::NewScene(_, _, _, _, _, plugins, _, services, _) => !plugins.is_empty() || !services.is_empty() || std::path::Path::new(&logic).is_file(),
+            Event::ReloadLogic => std::path::Path::new(&logic).is_file(),
+            _ => false,
+        };
+        if !wants {
+            return false;
+        }
+        let Some((tx, to_logic, blocked)) = self.grow.take() else { return false };
+        println!("logic  · the scene brings logic now: it starts");
+        let mut script = crate::logic_luau::LuauScript::new(&self.path, &logic, tx, to_logic, blocked);
+        let _ = script.scene();
+        script.on_event(Event::Alarm("start"), c);
+        self.grown = Some(Box::new(script));
+        true
     }
 }
 
@@ -49,6 +77,13 @@ impl Script for FromFile {
     }
 
     fn on_event(&mut self, e: Event, c: &mut Context) {
+        if let Some(grown) = &mut self.grown {
+            return grown.on_event(e, c);
+        }
+        #[cfg(feature = "luau")]
+        if self.grow_if_needed(&e, c) {
+            return;
+        }
         match e {
             // Without a mouse, `--demo` fires the "demo" signal: the scene will say what it does with it.
             Event::Demo => c.signal("demo"),
@@ -59,6 +94,16 @@ impl Script for FromFile {
             Event::Signal(s, None) => println!("logic  · '{s}' happened"),
             Event::Signal(s, Some(v)) => println!("logic  · '{s}' happened, with {v:.2}"),
             _ => {}
+        }
+    }
+
+    fn next_deadline(&self) -> Option<std::time::Instant> {
+        self.grown.as_ref().and_then(|g| g.next_deadline())
+    }
+
+    fn tick(&mut self, c: &mut Context) {
+        if let Some(grown) = &mut self.grown {
+            grown.tick(c);
         }
     }
 }
@@ -84,8 +129,10 @@ pub fn script_for(path: &str, tx: Sender<ToRender>, to_logic: Sender<Event>, blo
             }
         }
     }
-    let _ = (tx, to_logic, blocked, logic);
-    Box::new(FromFile::new(path))
+    let _ = logic;
+    let mut plain = FromFile::new(path);
+    plain.grow = Some((tx, to_logic, blocked));
+    Box::new(plain)
 }
 
 fn logic_path_for(path: &str) -> String {

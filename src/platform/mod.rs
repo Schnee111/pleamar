@@ -365,6 +365,18 @@ pub fn layers_placed() -> u64 {
     0
 }
 
+/// A surface its scene was saved with at another size, edge, margin, room or
+/// level, while running: changed in place. A platform that places surfaces
+/// itself (pleamar-wm's own scene) is not asked.
+pub fn reshape(which: usize, surface: &crate::scene::Surface) {
+    if LAYER_HOOKS.get().is_some() {
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    wayland::reshape(which, surface);
+    let _ = (which, surface);
+}
+
 pub fn reanchor(which: usize, anchor: crate::scene::SurfaceAnchor) {
     if let Some(h) = LAYER_HOOKS.get() {
         return (h.reanchor)(which, anchor);
