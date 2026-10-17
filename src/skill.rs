@@ -21,6 +21,8 @@ const DOCS: &[(&str, &str, &str)] = &[
     ("recipes", "whole scenes that work", include_str!("../docs/recipes.md")),
     ("logic", "what the .luau logic can and cannot do", include_str!("../docs/10-luau-logic.md")),
     ("measuring", "measuring what a scene costs and how long its animations last", MEASURING),
+    ("skill", "how to write scenes well: what an agent reads first (the skill itself)", SKILL),
+    ("desktop", "the desktop: shells, apps, the window manager, from ~/.config/pleamar", DESKTOP),
 ];
 
 /// Which skill this is: pleamar's version and a fingerprint of what the skill
