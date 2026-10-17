@@ -698,6 +698,7 @@ pub fn run(
         if std::mem::take(&mut pointer_later) {
             pointer = None;
             real_pointer = None;
+            finger_down = false;
         }
         // (which one, whether it comes from the logic)
         let mut signals: Vec<(usize, bool, Option<f32>)> = late_signals.drain(..).map(|s| (s.0 as usize, false, None)).collect();
@@ -901,6 +902,23 @@ pub fn run(
                     texts = fresh.texts.iter().map(|(n, initial)| scene.texts.iter().position(|t| t.0 == *n).map_or_else(|| initial.clone(), |k| texts[k].clone())).collect();
                     shown_locale = None;
                     atlas_stale = true;
+                    // A surface saved at another size, edge, margin, room or level
+                    // changes in place: it kept its first ones until the scene
+                    // started again, and what grew past them was cut off. One that
+                    // became another kind of thing or went to other monitors is
+                    // only made again when the scene starts again: it says so.
+                    let shape = |s: &crate::scene::Surface| (s.width, s.height, s.anchor, s.margin, s.exclusive_zone, s.level);
+                    for (k, (was, now)) in scene.surfaces.iter().zip(&fresh.surfaces).enumerate() {
+                        if shape(was) != shape(now) {
+                            crate::platform::reshape(k, now);
+                        }
+                        if was.window != now.window || was.lock_screen != now.lock_screen || was.screens != now.screens || was.keyboard != now.keyboard {
+                            println!("reload · surface {k} is now another kind of surface, on other monitors or with another keyboard: that is applied when the scene starts again");
+                        }
+                    }
+                    if !scene.surfaces.is_empty() && scene.surfaces.len() != fresh.surfaces.len() {
+                        println!("reload · the scene now has {} surfaces instead of {}: the new ones appear when it starts again", fresh.surfaces.len(), scene.surfaces.len());
+                    }
                     println!(
                         "render · scene: {} properties, {} instructions, {} facts, {} layers, {} gestures, {} rules, {} zones",
                         fresh.props.len(), fresh.instrs.len(), fresh.facts.len(), fresh.layers.len(),
@@ -1035,7 +1053,14 @@ pub fn run(
                         assign_pace(g, &mut sheets, size, op.no_vsync);
                     }
                 }
-                ToRender::Workshop(p) => letters.receive(*p),
+                // A text laid out, an image loaded: the list is made again with
+                // it. Kept as it was, a scene that does not move painted its old
+                // list —made before the text was there— and never another: after
+                // a reload its texts stayed unwritten.
+                ToRender::Workshop(p) => {
+                    letters.receive(*p);
+                    compose_memo = None;
+                }
                 // A window someone stretches: the sheet changes, and with it what the
                 // scene reads in `screen.width` and `screen.height`.
                 // A capture of what is behind a glass: the background is unmixed, and if
@@ -1254,6 +1279,13 @@ pub fn run(
                     pointer = p;
                     real_pointer = p;
                     last_activity = Instant::now();
+                    // Gone with the button down, its release goes elsewhere: a
+                    // press that changed the input region under it (a panel that
+                    // opens on a click) never heard it, and its light stayed on
+                    // for good —the scene drew every frame of the monitor, at rest—.
+                    if p.is_none() {
+                        finger_down = false;
+                    }
                 }
                 ToRender::Button(b, down) | ToRender::AgentButton(b, down) => {
                     buttons_agent.resize(buttons.len(), false);
