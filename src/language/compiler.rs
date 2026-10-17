@@ -4137,6 +4137,17 @@ impl<'a> Compiler<'a> {
                 None => return Err(CompileError::at(n.line, n.col, "only a window has a title: add `kind: window`")),
             }
         }
+        if let Some(c) = p.get_mut("app_id") {
+            let id = c.string()?;
+            c.expect_end()?;
+            if s.window.is_none() {
+                return Err(CompileError::at(n.line, n.col, "only a window has an app_id: add `kind: window`"));
+            }
+            if id.is_empty() || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || "._-".contains(ch)) {
+                return Err(CompileError::at(n.line, n.col, "an app_id is letters, digits, `.`, `_` and `-`, as a `.desktop` file is named: `app_id: \"org.me.notes\"`"));
+            }
+            s.app_id = Some(id);
+        }
         if s.window.is_some() && s.width == 0 {
             return Err(CompileError::at(n.line, n.col, "a window says how wide it is: `full` is for a panel, which is as wide as its monitor"));
         }

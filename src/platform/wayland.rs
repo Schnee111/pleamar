@@ -909,7 +909,7 @@ impl State {
             if let (Some(title), Some(pp)) = (&p.window, POPUPS.get()) {
                 let window = pp.xdg.create_window(wl, WindowDecorations::RequestServer, qh);
                 window.set_title(if title.is_empty() { "pleamar" } else { title });
-                window.set_app_id("pleamar");
+                window.set_app_id(p.app_id.as_deref().unwrap_or("pleamar"));
                 window.set_min_size(Some((p.width, height)));
                 let id = next_surface_id();
                 window.commit();

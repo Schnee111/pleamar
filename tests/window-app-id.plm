@@ -1,0 +1,6 @@
+// expect: ok
+// A window's own name to the desktop: its .desktop file, its icon in the dock.
+scene Notes {
+    surface { size: 420, 300; kind: window; title: "Notes"; app_id: "org.example.notes" }
+    box { from: 0, 0; size: 420, 300; color: #1b1d1f }
+}

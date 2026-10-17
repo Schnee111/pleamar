@@ -1,0 +1,5 @@
+// expect: error «only a window has an app_id»
+scene Bar {
+    surface { size: full, 40; anchor: top; app_id: "bar" }
+    box { from: 0, 0; size: 1920, 40; color: #1b1d1f }
+}

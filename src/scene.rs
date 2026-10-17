@@ -138,6 +138,10 @@ pub struct Surface {
     /// If it is a normal window —the kind the compositor decorates and places— instead of
     /// a panel attached to the edge: what its title is. Without this, it is a panel.
     pub window: Option<String>,
+    /// A window's own name to the desktop (`app_id: "notes"`): what its
+    /// `.desktop` file is called, so the dock gives it its icon and groups its
+    /// windows. Without it, "pleamar", like every other.
+    pub app_id: Option<String>,
     /// If it is the lock screen: a surface that does NOT exist until its
     /// `open:` becomes true, and that, once it exists, has the session really
     /// locked —the compositor guarantees it, not the drawing—, on all
@@ -182,7 +186,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_while: None, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, app_id: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, rate_while: None, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
     }
 }
 
