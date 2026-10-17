@@ -27,6 +27,10 @@ const IDLE: Duration = Duration::from_secs(4);
 /// takes the place of the one that started first.
 const LONGEST_TONE: f32 = 10.0;
 const VOICES: usize = 48;
+/// The longest a sound can be told to wait, and how many may wait at once:
+/// a tune is its notes asked for all together, each with its own delay.
+const LONGEST_DELAY: f32 = 60.0;
+const WAITING: usize = 4096;
 
 /// A sound, read: two channels interleaved, at its own rate.
 pub struct Clip {
@@ -44,11 +48,15 @@ pub struct How {
     /// −1 all to the left, 1 all to the right.
     pub pan: f32,
     pub repeats: bool,
+    /// Seconds to wait before it starts, counted by the mixer's own clock: the
+    /// notes of a tune asked for at once are each where they belong, to the
+    /// sample, however late the frame that asked for them was.
+    pub delay: f32,
 }
 
 impl Default for How {
     fn default() -> How {
-        How { volume: 1.0, pitch: 1.0, pan: 0.0, repeats: false }
+        How { volume: 1.0, pitch: 1.0, pan: 0.0, repeats: false, delay: 0.0 }
     }
 }
 
@@ -90,6 +98,8 @@ struct Voice {
     left: f32,
     right: f32,
     repeats: bool,
+    /// Frames still to wait before it starts.
+    wait: usize,
 }
 
 struct Mixer {
@@ -314,13 +324,20 @@ fn take(voices: &mut Vec<Voice>, loud: &mut f32, o: Order) {
             if clip.samples.len() < 2 {
                 return;
             }
-            if voices.len() >= VOICES {
-                voices.remove(0);
+            let wait = (how.delay.clamp(0.0, LONGEST_DELAY) * RATE as f32) as usize;
+            // Only what sounds counts towards the voices; what waits, towards its own limit.
+            if wait == 0 && voices.iter().filter(|v| v.wait == 0).count() >= VOICES {
+                if let Some(first) = voices.iter().position(|v| v.wait == 0) {
+                    voices.remove(first);
+                }
+            }
+            if wait > 0 && voices.iter().filter(|v| v.wait > 0).count() >= WAITING {
+                return;
             }
             // The same loudness whichever side it is on: what one loses the other gains.
             let angle = (how.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
             let v = how.volume.clamp(0.0, 4.0) * std::f32::consts::SQRT_2;
-            voices.push(Voice { id, at: 0.0, step: clip.rate as f64 / RATE as f64 * how.pitch.clamp(0.05, 16.0) as f64, left: v * angle.cos(), right: v * angle.sin(), repeats: how.repeats, clip });
+            voices.push(Voice { id, at: 0.0, step: clip.rate as f64 / RATE as f64 * how.pitch.clamp(0.05, 16.0) as f64, left: v * angle.cos(), right: v * angle.sin(), repeats: how.repeats, wait, clip });
         }
         Order::Stop(Some(id)) => voices.retain(|v| v.id != id),
         Order::Stop(None) => voices.clear(),
@@ -330,13 +347,17 @@ fn take(voices: &mut Vec<Voice>, loud: &mut f32, o: Order) {
 
 /// Fills `out` (bytes: left and right, 16 bits each) with what is sounding.
 fn mix(voices: &mut Vec<Voice>, loud: f32, out: &mut [u8]) {
-    for frame in out.chunks_exact_mut(4) {
-        let (mut l, mut r) = (0.0f32, 0.0f32);
-        for v in voices.iter_mut() {
-            let frames = v.clip.samples.len() / 2;
+    let mut sum = vec![(0.0f32, 0.0f32); out.len() / 4];
+    for v in voices.iter_mut() {
+        // What waits starts inside this stretch, or does not sound in it at all.
+        let skip = v.wait.min(sum.len());
+        v.wait -= skip;
+        let frames = v.clip.samples.len() / 2;
+        let s = &v.clip.samples;
+        for (l, r) in sum[skip..].iter_mut() {
             if v.at >= frames as f64 {
                 if !v.repeats {
-                    continue;
+                    break;
                 }
                 v.at %= frames as f64;
             }
@@ -344,21 +365,22 @@ fn mix(voices: &mut Vec<Voice>, loud: f32, out: &mut [u8]) {
             let k = v.at as usize;
             let next = if k + 1 < frames { k + 1 } else if v.repeats { 0 } else { k };
             let f = (v.at - k as f64) as f32;
-            let s = &v.clip.samples;
-            l += (s[k * 2] as f32 * (1.0 - f) + s[next * 2] as f32 * f) * v.left;
-            r += (s[k * 2 + 1] as f32 * (1.0 - f) + s[next * 2 + 1] as f32 * f) * v.right;
+            *l += (s[k * 2] as f32 * (1.0 - f) + s[next * 2] as f32 * f) * v.left;
+            *r += (s[k * 2 + 1] as f32 * (1.0 - f) + s[next * 2 + 1] as f32 * f) * v.right;
             v.at += v.step;
         }
-        // Too many at once does not crackle: past three quarters it is eased into the top.
-        let ease = |x: f32| {
-            let x = x * loud / 32767.0;
-            let soft = if x.abs() <= 0.75 { x } else { x.signum() * (0.75 + 0.25 * ((x.abs() - 0.75) / 0.25).tanh()) };
-            (soft * 32767.0) as i16
-        };
+    }
+    // Too many at once does not crackle: past three quarters it is eased into the top.
+    let ease = |x: f32| {
+        let x = x * loud / 32767.0;
+        let soft = if x.abs() <= 0.75 { x } else { x.signum() * (0.75 + 0.25 * ((x.abs() - 0.75) / 0.25).tanh()) };
+        (soft * 32767.0) as i16
+    };
+    for (frame, (l, r)) in out.chunks_exact_mut(4).zip(sum) {
         frame[..2].copy_from_slice(&ease(l).to_le_bytes());
         frame[2..].copy_from_slice(&ease(r).to_le_bytes());
     }
-    voices.retain(|v| v.repeats || v.at < (v.clip.samples.len() / 2) as f64);
+    voices.retain(|v| v.repeats || v.wait > 0 || v.at < (v.clip.samples.len() / 2) as f64);
 }
 
 /// One stream to the server, fed each time it asks, until there has been
@@ -506,5 +528,31 @@ mod tests {
         assert_eq!(voices.len(), 1);
         take(&mut voices, &mut loud, Order::Stop(None));
         assert!(voices.is_empty());
+    }
+
+    #[test]
+    fn what_is_told_to_wait_starts_on_its_sample_and_takes_no_voice() {
+        let clip = Arc::new(Clip { rate: RATE, samples: vec![1000; 8] });
+        let mut voices = Vec::new();
+        let mut loud = 1.0;
+        // Three frames late: silence, then its four frames, then silence again.
+        take(&mut voices, &mut loud, Order::Play(1, clip.clone(), How { delay: 3.0 / RATE as f32, ..Default::default() }));
+        let mut out = vec![0u8; 4 * 5];
+        mix(&mut voices, loud, &mut out);
+        let at = |out: &[u8], k: usize| i16::from_le_bytes([out[k * 4], out[k * 4 + 1]]);
+        assert_eq!((at(&out, 0), at(&out, 2)), (0, 0));
+        assert!(at(&out, 3) > 0 && at(&out, 4) > 0);
+        mix(&mut voices, loud, &mut out);
+        assert!(at(&out, 1) > 0 && at(&out, 2) == 0);
+        assert!(voices.is_empty());
+        // A whole tune waiting does not push out what is sounding.
+        for id in 0..VOICES as u32 {
+            take(&mut voices, &mut loud, Order::Play(id, clip.clone(), How { repeats: true, ..Default::default() }));
+        }
+        for id in 100..300 {
+            take(&mut voices, &mut loud, Order::Play(id, clip.clone(), How { delay: 1.0, ..Default::default() }));
+        }
+        assert_eq!(voices.len(), VOICES + 200);
+        assert!(voices.iter().any(|v| v.id == 0));
     }
 }

@@ -114,6 +114,9 @@ local id = sound.play("coin.wav", { volume = 0.8, pitch = 1.2, pan = -0.5 })
 local tune = sound.play("tune.ogg", { loop = true, volume = 0.4 })
 sound.tone({ wave = "square", freq = 440, to = 880, ms = 120, volume = 0.5 })   -- a jump
 sound.tone({ wave = "noise", freq = 900, to = 80, ms = 350, release = 300 })    -- a burst
+for i, hz in ipairs({ 523, 659, 784, 1047 }) do                                  -- a tune: every
+    sound.tone({ freq = hz, ms = 110, delay = (i - 1) * 120, duty = 0.25 })       -- note asked for
+end                                                                              -- now, each in its place
 sound.stop(tune)        -- one; sound.stop() is every one this logic started
 sound.load("tune.ogg")  -- read ahead of time: a long file takes a moment the first time
 sound.volume(0.6)       -- how loud everything this program plays is
@@ -125,6 +128,7 @@ sound.volume(0.6)       -- how loud everything this program plays is
 | `pitch` | 1 is as it is; 2, an octave up and half as long (files only) |
 | `pan` | −1 all to the left, 1 all to the right |
 | `loop` | it starts again when it ends, until it is stopped |
+| `delay` | milliseconds to wait before it starts. They are counted by the mixer, to the sample, not by the frames: the notes of a tune asked for all at once keep their time however late a frame is, and those still waiting take none of the 48 voices. `sound.stop` stops them before they start too |
 | `wave` | `sine`, `square` (the default), `saw`, `triangle`, `noise` |
 | `freq` · `to` | the pitch it starts at and the one it slides to, in hertz (`to` left out, it stays) |
 | `ms` · `attack` · `release` | how long it lasts, how long it takes to rise and how long to fall, in milliseconds |
@@ -133,7 +137,8 @@ sound.volume(0.6)       -- how loud everything this program plays is
 Everything a program plays is mixed here and goes to the sound server as one
 stream (PulseAudio's protocol, which PipeWire speaks too), opened the first
 time something sounds and let go after a few seconds of silence. Up to 48
-things sound at once; what a logic left sounding stops when it is reloaded.
+things sound at once (and up to 4096 wait their turn); what a logic left
+sounding, or waiting, stops when it is reloaded.
 On a machine with no sound server it says so once, and nothing is heard.
 
 ## The system services

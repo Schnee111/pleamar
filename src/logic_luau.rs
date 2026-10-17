@@ -835,19 +835,24 @@ impl LuauScript {
                 let n = |k: &str, or: f32| t.get::<Option<f32>>(k).map(|v| v.unwrap_or(or));
                 (h.volume, h.pitch, h.pan) = (n("volume", 1.0)?, n("pitch", 1.0)?, n("pan", 0.0)?);
                 h.repeats = t.get::<Option<bool>>("loop")?.unwrap_or(false);
+                h.delay = n("delay", 0.0)? / 1000.0;
             }
             Ok(h)
+        }
+        // What it started, for `sound.stop()` and for when it is reloaded. Only
+        // the last ones are remembered: what does not repeat ends by itself.
+        fn remember(c: &Arc<Mutex<Shared>>, id: u32) {
+            let mut c = c.lock().unwrap();
+            if c.sounds.len() >= 1024 {
+                c.sounds.remove(0);
+            }
+            c.sounds.push(id);
         }
         let (c, path) = (self.c.clone(), file.clone());
         sound.set("play", lua.create_function(move |_, (name, t): (String, Option<Table>)| {
             check_service_permission(&c, "sound", false)?;
             let id = crate::platform::sound::play(&path(&name)?, how(t.as_ref())?).map_err(mlua::Error::runtime)?;
-            let mut c = c.lock().unwrap();
-            // (Only the last few are remembered: what does not repeat ends by itself.)
-            if c.sounds.len() >= 256 {
-                c.sounds.remove(0);
-            }
-            c.sounds.push(id);
+            remember(&c, id);
             Ok(id)
         })?)?;
         let (c, path) = (self.c.clone(), file);
@@ -880,6 +885,7 @@ impl LuauScript {
                 duty: n("duty")?.unwrap_or(0.5),
             };
             let id = crate::platform::sound::tone(&tone, how(Some(&t))?);
+            remember(&c, id);
             Ok(id)
         })?)?;
         let c = self.c.clone();
