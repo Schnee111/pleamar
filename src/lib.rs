@@ -14,6 +14,7 @@ mod skill;
 mod shaders;
 mod shapes;
 mod lsp;
+mod luau_types;
 pub mod gpu;
 mod agent;
 #[cfg(target_os = "linux")]
@@ -50,6 +51,8 @@ const HELP: &str = "pleamar [options]
   --approve SCENE     shows what the plugins of a scene ask for, and asks whether to approve them
                       (with --yes after it, it does not ask). Unapproved, a plugin runs touching nothing
   --grammar           the words the language accepts, exactly as the compiler consults them
+  --luau-types [SCENE] a definitions file for luau-lsp: the globals a logic is given, typed, and with
+                      a scene its own facts, texts, models and events, so an editor completes them
   --docs [TOPIC]      the documentation of this version: reference, guide, recipes, logic, measuring
   --install-skill     teaches the AI agents installed (Claude Code, Codex, OpenCode) to build with
                       pleamar: writes its skill for each. It refreshes itself when pleamar updates
@@ -152,6 +155,20 @@ fn args(given: Vec<String>) -> Args {
                 std::process::exit(0);
             }
             "--highlight" => std::process::exit(lsp::highlighting(&value())),
+            // The logic's editor: what its globals are (`pleamar --luau-types marea.plm > pleamar.d.luau`).
+            "--luau-types" => {
+                let path = it.next().filter(|p| !p.starts_with("--"));
+                let scene = match path.as_deref().map(scenes::from_file::read) {
+                    Some(Ok(e)) => Some(e),
+                    Some(Err(m)) => {
+                        eprintln!("{m}");
+                        std::process::exit(1);
+                    }
+                    None => None,
+                };
+                print!("{}", luau_types::definitions(scene.as_ref()));
+                std::process::exit(0);
+            }
             "--check" => {
                 let path = value();
                 std::process::exit(match scenes::from_file::read(&path) {

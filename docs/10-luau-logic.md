@@ -57,6 +57,32 @@ busy(600)                                 -- fake work, to see that the renderer
 
 A misspelled name is an error there and then, with a suggestion: `the scene has no fact called 'opne'. Did you mean 'open'?`
 
+## The logic in your editor
+
+An editor that speaks Luau through [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp)
+does not know the globals pleamar gives a logic, and calls them undefined.
+`pleamar --luau-types` writes them down for it, typed; given the scene, it adds
+that scene's own names: `fact.` completes its facts, each as what it is
+(`boolean`, `number`, `"low" | "normal" | "critical"`), `text.` and `model.`
+theirs, and `emit` knows its events.
+
+```sh
+pleamar --luau-types marea.plm > pleamar.d.luau   # again when the scene's facts change
+```
+
+Then tell luau-lsp to load it, on the standard platform (not Roblox's):
+
+- **VS Code** (the *Luau Language Server* extension), in the settings:
+  `"luau-lsp.platform.type": "standard"` and the file in
+  `"luau-lsp.types.definitionFiles"`.
+- **Neovim** ([luau-lsp.nvim](https://github.com/lopi-py/luau-lsp.nvim)):
+  `platform = { type = "standard" }, types = { definition_files = { "pleamar.d.luau" } }`.
+- **Any other** (Helix, Zed…): start the server as
+  `luau-lsp lsp --definitions=@pleamar=pleamar.d.luau`.
+
+The same file checks a logic from a terminal:
+`luau-lsp analyze --platform standard --definitions=@pleamar=pleamar.d.luau marea.luau`.
+
 ## A logic that plays
 
 Everything above is for a logic that decides now and then. A game decides

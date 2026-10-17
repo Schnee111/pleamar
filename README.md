@@ -367,6 +367,13 @@ means, go to where a name was declared, where it is used, and renaming it.
 vocabulary, so it cannot fall behind. Both, already generated, in
 [`editor/`](editor/).
 
+For the logic, `pleamar --luau-types scene.plm > pleamar.d.luau` writes a
+definitions file for [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp): the
+globals a logic is given (`fact`, `on`, `sound`, `sys`…), typed, and that
+scene's own facts, texts, models and events, so `fact.` completes and
+`fact.mode = "critcal"` is underlined. How to point an editor at it:
+[docs/10-luau-logic.md](docs/10-luau-logic.md#the-logic-in-your-editor).
+
 # How it is built
 
 Three threads that never wait for each other: **platform** (windows and input),
