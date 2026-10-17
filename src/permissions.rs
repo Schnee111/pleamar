@@ -69,7 +69,8 @@ pub fn describe(p: &Permissions) -> String {
         [] => "none".to_owned(),
         _ => l.iter().map(|x| if flag(x) { format!("{x} ⚠") } else { x.clone() }).collect::<Vec<_>>().join(", "),
     };
-    let is_interpreter = |o: &str| INTERPRETERS.contains(&o.rsplit('/').next().unwrap_or(o));
+    // Bare: it runs whatever it is told. With its script (`"node usage.js"`), only that.
+    let is_interpreter = |o: &str| !o.contains(' ') && INTERPRETERS.contains(&o.rsplit('/').next().unwrap_or(o));
     let mut s = format!("commands: {} · services: {}", list(&p.commands, &is_interpreter), list(&p.services, &|_| false));
     if p.commands.iter().any(|o| is_interpreter(o)) {
         s.push_str(" · ⚠ an interpreter runs whatever it is told: that is asking for everything");

@@ -273,9 +273,29 @@ fn give_input(child: &mut std::process::Child, text: Option<String>) {
     });
 }
 
-fn check_command_permission(c: &Mutex<Shared>, command: &str) -> mlua::Result<()> {
-    if c.lock().unwrap().permissions.commands.iter().any(|o| o == command) {
+/// Whether a declared command allows this one. A bare name (`"date"`) allows
+/// the program with any arguments; with words after it (`"node tools/usage.js"`)
+/// it allows the program only when its arguments begin with those words: an
+/// interpreter, declared with its script, runs that script and nothing else.
+pub(crate) fn command_allowed(declared: &[String], command: &str, args: &[String]) -> bool {
+    declared.iter().any(|d| {
+        let mut words = d.split_whitespace();
+        if words.next() != Some(command) {
+            return false;
+        }
+        let rest: Vec<&str> = words.collect();
+        rest.len() <= args.len() && rest.iter().zip(args).all(|(w, a)| *w == a)
+    })
+}
+
+fn check_command_permission(c: &Mutex<Shared>, command: &str, args: &[String]) -> mlua::Result<()> {
+    let declared = c.lock().unwrap().permissions.commands.clone();
+    if command_allowed(&declared, command, args) {
         return Ok(());
+    }
+    // Declared with other arguments: said, so the fix is plain.
+    if let Some(d) = declared.iter().find(|d| d.split_whitespace().next() == Some(command)) {
+        return Err(mlua::Error::runtime(format!("'{command}' is allowed only as `{d}…`, not with {:?}", args)));
     }
     Err(denied(c, &format!("run '{command}'"), &format!("run: \"{command}\"")))
 }
@@ -965,7 +985,7 @@ impl LuauScript {
         // environment, which other programs can read (`sudo -S` and a password).
         // And `{ env = { LC_ALL = "C" } }`, variables of its own.
         g.set("run", lua.create_function(move |_, (command, args, f, how): (String, Option<Vec<String>>, Option<Function>, Option<mlua::Table>)| {
-            check_command_permission(&c, &command)?;
+            check_command_permission(&c, &command, args.as_deref().unwrap_or(&[]))?;
             let input: Option<String> = how.as_ref().and_then(|t| t.get("stdin").ok());
             let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
             let vars = environment(how.as_ref());
@@ -1049,7 +1069,7 @@ impl LuauScript {
         let (c, to_logic) = (self.c.clone(), self.to_logic.clone());
         g.set("spawn", lua.create_function(move |_, (command, args, f, on_exit, how): (String, Option<Vec<String>>, Function, Option<Function>, Option<mlua::Table>)| {
             use std::io::BufRead;
-            check_command_permission(&c, &command)?;
+            check_command_permission(&c, &command, args.as_deref().unwrap_or(&[]))?;
             let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
             let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
             let open: bool = how.as_ref().and_then(|t| t.get::<Option<String>>("stdin").ok().flatten()).is_some_and(|v| v == "open");
@@ -1651,3 +1671,19 @@ fn hit_table(lua: &Lua) -> mlua::Result<Table> {
 /// The modules the logic has loaded with `require`: the reload watches them
 /// too, so saving one of them reloads the logic like saving the main file.
 pub static REQUIRED: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+mod tests {
+    use super::command_allowed;
+
+    #[test]
+    fn a_command_declared_with_its_script_runs_only_that() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let declared = s(&["date", "node tools/usage.js"]);
+        assert!(command_allowed(&declared, "date", &s(&["+%H:%M"])));
+        assert!(command_allowed(&declared, "node", &s(&["tools/usage.js", "--lines"])));
+        assert!(!command_allowed(&declared, "node", &s(&["-e", "require('fs').rmSync('/')"])));
+        assert!(!command_allowed(&declared, "node", &s(&[])));
+        assert!(!command_allowed(&declared, "sh", &s(&["-c", "true"])));
+    }
+}

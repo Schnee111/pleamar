@@ -1,0 +1,7 @@
+// expect: ok
+// An interpreter declared with its script runs that script and nothing else.
+scene Usage {
+    surface { size: 200, 40; anchor: top }
+    permissions { run: "date", "node tools/usage.js" }
+    box { from: 0, 0; size: 200, 40; color: #1b1d1f }
+}
