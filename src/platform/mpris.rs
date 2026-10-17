@@ -133,7 +133,7 @@ fn now(c: &Connection) -> SysValue {
         field("position", SysValue::Num(position(&p))),
         // The spec's default; a player that cannot change it may leave it out.
         field("rate", SysValue::Num(p.get_property::<f64>("Rate").unwrap_or(1.0))),
-        field("art", from_metadata("mpris:artUrl")),
+        field("art", SysValue::Text(metadata.get("mpris:artUrl").map(text).map_or_else(String::new, |u| art_path(&u)))),
         field("player", SysValue::Text(name.trim_start_matches(PREFIX).split('.').next().unwrap_or_default().to_owned())),
         field("players", all_players(c)),
     ])
@@ -196,4 +196,105 @@ pub fn command(what: &str, args: &[SysValue]) -> Result<(), String> {
     let c = Connection::session().map_err(|e| e.to_string())?;
     let (_, p, _) = active_player(&c).ok_or("there is no player open")?;
     p.call_method(method, &()).map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// The cover as something a scene can paint: a `file://` URL as its path,
+/// percent-decoding and all, and a `data:` one (a browser's stream hands its
+/// picture over inline) decoded once into a file named after what it holds, the
+/// way a notification's pixels are. Anything else —`http(s)`— is left as the
+/// player said it: fetching from the network is the scene's to decide.
+fn art_path(url: &str) -> String {
+    let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
+    art_path_in(url, &std::path::Path::new(&base).join("pleamar").join("media"))
+}
+
+/// The same, writing a `data:` picture into `dir`.
+fn art_path_in(url: &str, dir: &std::path::Path) -> String {
+    if let Some(rest) = url.strip_prefix("file://") {
+        return percent_decoded(rest);
+    }
+    let Some(rest) = url.strip_prefix("data:") else { return url.to_owned() };
+    let Some((head, payload)) = rest.split_once(',') else { return String::new() };
+    let Some(mime) = head.strip_suffix(";base64") else { return String::new() };
+    let Some(bytes) = base64(payload) else { return String::new() };
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    // Raster pictures are told apart by what they hold; an svg, by its name.
+    let ext = if mime.contains("svg") { "svg" } else { "img" };
+    let path = dir.join(format!("{:016x}.{ext}", hasher.finish()));
+    // A player that keeps the same picture for many songs costs one write.
+    if !path.exists() && (std::fs::create_dir_all(dir).is_err() || std::fs::write(&path, &bytes).is_err()) {
+        return String::new();
+    }
+    path.to_string_lossy().into_owned()
+}
+
+/// `%20` back to a space; a `%` that is not followed by two hex digits stays.
+fn percent_decoded(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |k: usize| b.get(k).and_then(|c| (*c as char).to_digit(16));
+        match (b[i], hex(i + 1), hex(i + 2)) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+            }
+            (c, _, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Standard base64 (and its URL-safe letters), padding optional, spaces ignored.
+fn base64(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            b'=' | b' ' | b'\n' | b'\r' => continue,
+            _ => return None,
+        } as u32;
+        acc = (acc << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cover_url_becomes_a_path_a_scene_can_paint() {
+        assert_eq!(art_path("file:///home/me/My%20Music/cover%2B1.jpg"), "/home/me/My Music/cover+1.jpg");
+        assert_eq!(art_path("https://example.org/c.jpg"), "https://example.org/c.jpg");
+        assert_eq!(base64("aGVsbG8gd29ybGQ=").unwrap(), b"hello world");
+        assert_eq!(base64("aGk").unwrap(), b"hi");
+        assert!(base64("a*b").is_none());
+        assert_eq!(art_path("data:image/png,not-base64"), "");
+        // A data: picture is written once, under a name taken from what it holds.
+        let dir = std::env::temp_dir().join(format!("pleamar-art-{}", std::process::id()));
+        let p = art_path_in("data:image/png;base64,iVBORw0KGgo=", &dir);
+        assert!(p.starts_with(&dir.to_string_lossy().into_owned()) && p.ends_with(".img"));
+        assert_eq!(std::fs::read(&p).unwrap(), b"\x89PNG\r\n\x1a\n");
+        assert_eq!(art_path_in("data:image/png;base64,iVBORw0KGgo=", &dir), p);
+        assert!(art_path_in("data:image/svg+xml;base64,PHN2Zy8+", &dir).ends_with(".svg"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

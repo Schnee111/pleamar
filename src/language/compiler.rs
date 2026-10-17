@@ -10,7 +10,7 @@ use super::tokens::{Token, TokenKind};
 use super::vocabulary as vocab;
 use super::{closest_match, CompileError};
 use crate::scene::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -25,12 +25,34 @@ struct Cur<'a> {
     tokens: &'a [Token],
     i: usize,
     end: (usize, usize),
+    /// A property's value (`properties`): read, it has to be read to its end.
+    slot: bool,
+}
+
+thread_local! {
+    // Where the first property value read but not to its end was left: the
+    // statement it belongs to says so once it has been read (issue #58).
+    static LEFTOVER: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
+    // Those already said: a component or a monitor's copy reads the same value again.
+    static LEFTOVER_SAID: std::cell::RefCell<HashSet<(usize, usize)>> = std::cell::RefCell::new(HashSet::new());
+}
+
+/// A value read and then let go with something after it would drop that
+/// something without a word: `width: 200 200` was a 200. Every slot is
+/// checked here, whoever read it, instead of at each of the reads.
+impl Drop for Cur<'_> {
+    fn drop(&mut self) {
+        if self.slot && self.i > 0 && self.i < self.tokens.len() {
+            let t = &self.tokens[self.i];
+            LEFTOVER.with(|l| l.borrow_mut().push((t.line, t.col)));
+        }
+    }
 }
 
 impl<'a> Cur<'a> {
     fn new(tokens: &'a [Token], line: usize, col: usize) -> Self {
         let end = tokens.last().map_or((line, col), |u| (u.line, u.col + 1));
-        Cur { tokens, i: 0, end }
+        Cur { tokens, i: 0, end, slot: false }
     }
     fn peek(&self) -> Option<&'a TokenKind> {
         // The last thing peeked at is almost always the name about to be resolved: that way
@@ -382,6 +404,9 @@ pub struct Symbol {
 }
 
 pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path::PathBuf], strict_files: &'a [usize], libraries: &'a [Library]) -> (Result<Scene, Vec<CompileError>>, Vec<Symbol>) {
+    // Nothing left over from a compilation before this one (a reload runs on the same thread).
+    LEFTOVER.with(|l| l.borrow_mut().clear());
+    LEFTOVER_SAID.with(|s| s.borrow_mut().clear());
     let generated = typed_arena::Arena::new();
     let scene = match tree {
         [Entry::Node(n)] if matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "scene") => n,
@@ -1535,7 +1560,9 @@ impl<'a> Compiler<'a> {
                 // anything: in marea-plm that left the audio service without permissions
                 // —two `services:` lines, one per topic, and the one below won—
                 // and a while was spent looking for it in the wrong place.
-                if m.insert(name.as_str(), Cur::new(value, *line, *col)).is_some() {
+                let mut c = Cur::new(value, *line, *col);
+                c.slot = true;
+                if m.insert(name.as_str(), c).is_some() {
                     return Err(CompileError::at(*line, *col, format!("'{name}' is said twice here, and only the last one would count. Put it once, with everything it carries")));
                 }
             }
@@ -1780,8 +1807,21 @@ impl<'a> Compiler<'a> {
         for e in entries {
             let Entry::Node(n) = e else { continue };
             // An error does not stop the reading: it is noted and reading goes on, to report them all.
-            if let Err(f) = self.statement(n, &mut clips) {
-                self.push_error(f);
+            let r = self.statement(n, &mut clips);
+            let mut left = LEFTOVER.with(|l| std::mem::take(&mut *l.borrow_mut()));
+            left.sort_unstable();
+            match r {
+                Err(f) => self.push_error(f),
+                // Said, not refused: scenes that have one were drawn without it
+                // all along, and still load (`padding: 6, 9` was a 6).
+                Ok(()) => {
+                    for (l, c) in left {
+                        if LEFTOVER_SAID.with(|s| s.borrow_mut().insert((l, c))) {
+                            let file = self.files.get(l / super::PER_FILE).map_or("", String::as_str);
+                            eprintln!("note   · {file}:{}:{c}: this is left over here: what follows the value is not used", l % super::PER_FILE);
+                        }
+                    }
+                }
             }
         }
         // A clip holds until the end of its group.
@@ -4112,6 +4152,7 @@ impl<'a> Compiler<'a> {
             if c.word("while") {
                 s.keyboard_while = true;
                 self.pending_keyboard = Some((&c.tokens[c.i..], c.pos()));
+                c.i = c.tokens.len();
             } else {
                 c.expect_end()?;
             }

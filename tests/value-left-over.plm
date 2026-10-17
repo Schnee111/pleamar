@@ -1,0 +1,8 @@
+// expect: note «this is left over here»
+// A value with something after it is said, not dropped in silence: `width: 200 200` was a 200 (issue #58).
+language 0.4
+scene LeftOver {
+    surface { size: 300, 60 }
+    text query = ""
+    input query { at: 10, 10; width: 200 200 }
+}
