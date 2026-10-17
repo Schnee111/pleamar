@@ -83,7 +83,7 @@ impl Script for Face {
         e.paint(Instr::Shape { shape: body.clone(), fusion: 0.0.into() });
         e.paint(Instr::Fill { paint: color(0.082, 0.086, 0.086).into(),
             alpha: 1.0.into(),
-            rim: 0.05,
+            rim: 0.05.into(),
             light: Some(Light { amount: 0.03, from_y: (CY - R).into(), height: R * 2.0 }),
             border: None,
             glass_spec: None,

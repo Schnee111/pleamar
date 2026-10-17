@@ -1,0 +1,17 @@
+// A component's own `size:` sees the `let`s of its body, the line above it (issue #56).
+language 0.4
+scene ComponentSizeLets {
+    surface { size: 200, 60 }
+
+    component Chip {
+        let k = 1.5
+        size: 40 * k, 20 * k
+        box { from: 0, 0; size: 40 * k, 20 * k; corner: 6 }
+    }
+
+    row {
+        at: 10, 10
+        Chip { }
+        Chip { }
+    }
+}

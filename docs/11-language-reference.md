@@ -519,6 +519,17 @@ Each element accepts these properties and no others; another one is an error, wi
 
 `anchor` of a text: `left` `center` `right` and `top` `center` `bottom`, one or both (`anchor: left center`). Of a layout: `left` `center` `right` and `top` `middle` `bottom` —with no anchor, `at` is its top left corner—. `cursor:` `default` `pointer` `text` `grab` `grabbing`, and for stretching and carrying `ew_resize` `ns_resize` `nwse_resize` `nesw_resize` `move`, `not_allowed`, `crosshair`.
 
+**A text's `size:` and `weight:`, and a body's `rim:`, are expressions** like
+its `at:` and its `opacity:`: `size: 21 * u` is 21 times `u`, `size: 12 + 4 * lane`
+follows `lane` as it changes, `weight: 500 + 200 * if(today, 1, 0)` is bold on one
+day, and `rim: 10% + 12% * hover` lights up under the mouse. What is read only
+once, when the scene loads —an input's `size:`, a text's `line_height:` and
+`lines:`— takes a number or one worked out from numbers and `let`s of numbers
+(`40 * 2`, `1.5 * rung`), and says so if it is given something that changes.
+The slots that take a plain number —a surface's `margin:` and `reserve:`, an
+image's declared size— say so too when something follows it, instead of reading
+its first number and dropping the rest.
+
 **A shadow can be of any colour, and everything about it is an expression.**
 Black if no colour is said, which is what a shadow is on paper. On a desktop of
 dark windows a black shadow has nothing to darken and reads as dirt, and a

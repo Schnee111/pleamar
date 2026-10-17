@@ -1,0 +1,14 @@
+// A text's size and weight, and a body's rim, are expressions: `1 * rung` is 16, not 1 (issue #55).
+language 0.4
+scene TextSizeExpression {
+    surface { size: 300, 120 }
+    let rung = 16
+    fact lane: number = 3
+    fact today = false
+    fact hover: number = 0
+    text "hello" { at: 0, 0; size: 1 * rung; weight: 300 + 400 }
+    text "hello" { at: 0, 30; size: 8.5 + 2 * lane; weight: 500 + 200 * if(today, 1, 0) }
+    body { color: #202020; rim: 10% + 12% * hover; box { at: 150, 90; size: 80, 30 } }
+    text query = ""
+    input query { at: 0, 60; width: 200; size: 10 + 0.5 * rung }
+}

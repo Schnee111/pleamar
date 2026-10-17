@@ -4730,11 +4730,11 @@ fn error_banner(message: &str, width: f32) -> Vec<Instr> {
     vec![
         Instr::Group { shadow: Some(Shadow { offset: (0.0.into(), 6.0.into()), blur: 18.0.into(), alpha: 0.45.into(), color: None }) },
         Instr::Shape { shape: rect(8.0, width - 16.0, 10.0), fusion: 0.0.into() },
-        Instr::Fill { paint: color(0.18, 0.05, 0.06).into(), alpha: 1.0.into(), rim: 0.05, light: None, border: None, glass_spec: None },
+        Instr::Fill { paint: color(0.18, 0.05, 0.06).into(), alpha: 1.0.into(), rim: 0.05.into(), light: None, border: None, glass_spec: None },
         // A tab in the colour of errors, on the left: it is read before the text.
         Instr::Group { shadow: None },
         Instr::Shape { shape: rect(8.0, 5.0, 2.5), fusion: 0.0.into() },
-        Instr::Fill { paint: color(0.99, 0.41, 0.33).into(), alpha: 1.0.into(), rim: 0.05, light: None, border: None, glass_spec: None },
+        Instr::Fill { paint: color(0.99, 0.41, 0.33).into(), alpha: 1.0.into(), rim: 0.05.into(), light: None, border: None, glass_spec: None },
         Instr::Text {
             content: Content::Literal("this does not compile — the last good scene is still running".into()),
             at: (26.0.into(), 17.0.into()),

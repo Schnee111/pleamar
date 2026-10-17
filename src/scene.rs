@@ -1112,11 +1112,16 @@ pub struct Style {
     pub max_lines: Option<usize>,
     /// `markdown: true`: its marks are read, not shown (`crate::markdown`).
     pub markdown: bool,
+    /// Its size when it changes while the scene runs (`size: 12 + 4 * lane`),
+    /// worked out at every frame; otherwise it is `px`.
+    pub size: Option<Expr>,
+    /// The same for its weight (`weight: 500 + 200 * if(today, 1, 0)`).
+    pub weight_of: Option<Expr>,
 }
 
 impl Style {
     pub fn new(px: f32, color: Color) -> Self {
-        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false }
+        Style { family: None, px, weight: 400, color, line_height: 1.3, align: TextAlign::Left, max_lines: None, markdown: false, size: None, weight_of: None }
     }
     pub fn weight(mut self, p: u16) -> Self {
         self.weight = p;
@@ -1165,7 +1170,7 @@ pub enum Instr {
     Shape { shape: Shape, fusion: Expr },
     /// Paints the accumulated body: shadow, fill, light and rim. With `glass_spec`, from
     /// 0 to 1, the fill turns into glass: translucent, and with the light on the edges.
-    Fill { paint: Paint, alpha: Expr, rim: f32, light: Option<Light>, border: Option<(Expr, Color)>, glass_spec: Option<Glass> },
+    Fill { paint: Paint, alpha: Expr, rim: Expr, light: Option<Light>, border: Option<(Expr, Color)>, glass_spec: Option<Glass> },
     /// Everything that comes after is clipped to this shape, as well as to the ones
     /// that were already there (up to four). `None` removes the last one.
     Clip(Option<(Shape, f32)>),

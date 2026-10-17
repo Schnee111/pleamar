@@ -86,8 +86,14 @@ impl<'a> Cur<'a> {
         let negative = self.sym("-");
         match self.peek() {
             Some(TokenKind::Num(n) | TokenKind::Angle(n)) => {
+                let n = if negative { -n } else { *n };
                 self.i += 1;
-                Ok(if negative { -n } else { *n })
+                // A slot that takes a plain number used to read the first one and
+                // drop the rest without a word: `1 * rung` was a 1 (issue #55).
+                if matches!(self.peek(), Some(TokenKind::Sym("*" | "/" | "+" | "-" | "%"))) {
+                    return self.error("only a plain number goes here: what follows it would be dropped");
+                }
+                Ok(n)
             }
             _ => self.error("expected a number here"),
         }
@@ -1130,6 +1136,19 @@ impl<'a> Compiler<'a> {
     }
 
     // ── expressions ─────────────────────────────────────────────
+
+    /// A number read once, when loading: written plainly or worked out from
+    /// numbers and `let`s of numbers (`40 * 2`, `1.5 * rung`), but not from
+    /// anything that changes while the scene runs.
+    fn constant(&self, c: &mut Cur, what: &str) -> R<f32> {
+        let at = c.pos();
+        let e = self.expr(c)?;
+        c.expect_end()?;
+        match e {
+            Expr::K(v) => Ok(v),
+            _ => Err(CompileError::at(at.0, at.1, format!("{what} is read once, when the scene loads: a number, or one worked out from numbers and `let`s of numbers, not from something that changes while it runs"))),
+        }
+    }
 
     fn expr(&self, c: &mut Cur) -> R<Expr> {
         let mut a = self.expr_and(c)?;
@@ -2683,9 +2702,15 @@ impl<'a> Compiler<'a> {
             }
             None => None,
         };
+        // An expression, like the opacity: `rim: 10% + 12% * hover` glows as
+        // it is hovered (it used to be read as its first number, 10%).
         let rim = match p.get_mut("rim") {
-            Some(c) => c.num()?,
-            None => 0.0,
+            Some(c) => {
+                let e = self.expr(c)?;
+                c.expect_end()?;
+                e
+            }
+            None => Expr::K(0.0),
         };
         let glass_spec = self.glass_spec(&mut p, n)?;
         let alpha = match p.get_mut("opacity") {
@@ -3174,17 +3199,27 @@ impl<'a> Compiler<'a> {
             None => return Err(CompileError::at(n.line, n.col, "this text is missing 'at'")),
         };
         let mut style = Style::new(14.0, color(1.0, 1.0, 1.0));
+        // Its size is an expression like any other: worked out when loading if it
+        // does not change (`21 * u`), and at every frame if it does.
         if let Some(c) = p.get_mut("size") {
-            style.px = c.num()?;
+            match self.expr(c)? {
+                Expr::K(v) => style.px = v,
+                e => style.size = Some(e),
+            }
+            c.expect_end()?;
         }
         if let Some(c) = p.get_mut("weight") {
-            style.weight = c.num()? as u16;
+            match self.expr(c)? {
+                Expr::K(v) => style.weight = v as u16,
+                e => style.weight_of = Some(e),
+            }
+            c.expect_end()?;
         }
         if let Some(c) = p.get_mut("line_height") {
-            style.line_height = c.num()?;
+            style.line_height = self.constant(c, "a text's `line_height:`")?;
         }
         if let Some(c) = p.get_mut("lines") {
-            style.max_lines = Some(c.num()? as usize);
+            style.max_lines = Some(self.constant(c, "a text's `lines:`")? as usize);
         }
         if let Some(c) = p.get_mut("markdown") {
             let v = c.id("true or false")?;
@@ -3350,11 +3385,12 @@ impl<'a> Compiler<'a> {
             None => return Err(CompileError::at(n.line, n.col, "this input is missing 'width'")),
         };
         let mut style = Style::new(15.0, color(1.0, 1.0, 1.0));
+        // (An input's size sets the height of its zone, which is laid out once.)
         if let Some(c) = p.get_mut("size") {
-            style.px = c.num()?;
+            style.px = self.constant(c, "an input's `size:`")?;
         }
         if let Some(c) = p.get_mut("weight") {
-            style.weight = c.num()? as u16;
+            style.weight = self.constant(c, "an input's `weight:`")? as u16;
         }
         if let Some(c) = p.get_mut("family") {
             style.family = Some(interned(&c.string()?));
@@ -4076,6 +4112,8 @@ impl<'a> Compiler<'a> {
             if c.word("while") {
                 s.keyboard_while = true;
                 self.pending_keyboard = Some((&c.tokens[c.i..], c.pos()));
+            } else {
+                c.expect_end()?;
             }
         }
         if let Some(c) = p.get_mut("reserve") {
@@ -4084,6 +4122,8 @@ impl<'a> Compiler<'a> {
             if c.word("while") {
                 self.pending_reserves.push((which, &c.tokens[c.i..], c.pos()));
                 c.i = c.tokens.len();
+            } else {
+                c.expect_end()?;
             }
         }
         // `rate: 60`: at most, that many frames per second, on any monitor.
@@ -4657,13 +4697,14 @@ impl<'a> Compiler<'a> {
         self.instance_children.push(InstanceChildren { outer: self.scopes.clone(), slots });
         self.scopes.push(Rc::new(env));
         self.declare_measures_early(body);
-        // How much room it takes is said by the component itself: `size: 300, 44`. If it fails, the scope
-        // is closed all the same: otherwise, what comes after would be read as if it were in here.
+        // How much room it takes is said by the component itself: `size: 300, 44`. It is read after
+        // the body, still inside its scope, so that it sees the body's own `let`s. If it fails, the
+        // scope is closed all the same: otherwise, what comes after would be read as if it were in here.
+        let mut r = self.group_with_properties(n, body);
         let mut size = None;
-        let mut r = Ok(());
         for e in body {
             if let Entry::Prop { name, value, line, col } = e {
-                if name == "size" {
+                if name == "size" && r.is_ok() {
                     let mut c = Cur::new(value, *line, *col);
                     match self.point(&mut c) {
                         Ok(t) => size = Some(t),
@@ -4671,9 +4712,6 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
-        }
-        if r.is_ok() {
-            r = self.group_with_properties(n, body);
         }
         self.close_scope(from);
         self.instance_children.pop();

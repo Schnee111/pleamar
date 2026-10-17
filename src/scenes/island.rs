@@ -37,7 +37,7 @@ impl Script for Island {
         e.paint(Instr::Group { shadow: Some(Shadow { offset: (0.0.into(), 8.0.into()), blur: 26.0.into(), alpha: 0.3.into(), color: None }) });
         e.paint(Instr::Shape { shape: island.clone(), fusion: 0.0.into() });
         e.paint(Instr::Shape { shape: Shape::circle((drop_x.clone(), drop_y.into()), 18.0 * drop.e().smoothstep(0.0, 0.35)), fusion: fusion.e() });
-        e.paint(Instr::Fill { paint: color(0.04, 0.043, 0.045).into(), alpha: 1.0.into(), rim: 0.06, light: None, border: None, glass_spec: None });
+        e.paint(Instr::Fill { paint: color(0.04, 0.043, 0.045).into(), alpha: 1.0.into(), rim: 0.06.into(), light: None, border: None, glass_spec: None });
 
         // The drop's pilot light, which pulses by itself.
         e.paint(Instr::Solid {

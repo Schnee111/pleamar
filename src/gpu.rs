@@ -1325,7 +1325,7 @@ impl DrawList {
                                 }
                             }
                         }
-                        e[11] = *edge;
+                        e[11] = edge.eval(c);
                         // A body does not use `uv`, which is for textures: the
                         // glass goes there, and the width of its bevel, which
                         // grows with it: something big bends the light more,
@@ -1572,6 +1572,16 @@ impl DrawList {
                     } else {
                         let key = LayoutKey::new(&text, style, width.as_ref().map(|w| w.eval(c)));
                         (text, key)
+                    };
+                    // A size that changes, at the value it has now (whole quarter
+                    // pixels: a size that glides does not shape a new layout each frame).
+                    let key = match &style.size {
+                        Some(e) => key.sized((e.eval(c) * 4.0).round().max(4.0) / 4.0),
+                        None => key,
+                    };
+                    let key = match &style.weight_of {
+                        Some(e) => key.weighted((e.eval(c) / 100.0).round().clamp(1.0, 9.0) as u16 * 100),
+                        None => key,
                     };
                     let text: &str = &text;
                     // It is ordered even if not visible: so that when it appears, it is already there.

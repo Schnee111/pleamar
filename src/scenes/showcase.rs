@@ -26,7 +26,7 @@ impl Script for Showcase {
         // A dark background so everything reads on any desktop.
         e.paint(Instr::Group { shadow: Some(Shadow { offset: (0.0.into(), 8.0.into()), blur: 24.0.into(), alpha: 0.3.into(), color: None }) });
         e.paint(Instr::Shape { shape: Shape::Rect { center: (360.0.into(), 186.0.into()), half_size: (350.0.into(), 176.0.into()), radius: 22.0.into() }, fusion: 0.0.into() });
-        e.paint(Instr::Fill { paint: ink.clone().into(), alpha: 0.94.into(), rim: 0.04, light: None, border: None, glass_spec: None });
+        e.paint(Instr::Fill { paint: ink.clone().into(), alpha: 0.94.into(), rim: 0.04.into(), light: None, border: None, glass_spec: None });
 
         // 1 · gradient and border, on a box that spins on itself.
         e.paint(Instr::Group { shadow: None });
@@ -37,7 +37,7 @@ impl Script for Showcase {
         e.paint(Instr::Fill {
             paint: Paint::Gradient { radial: false, from: (45.0.into(), 70.0.into()), to: (145.0.into(), 146.0.into()), stops: vec![(0.0.into(), color(0.62, 0.84, 0.74)), (1.0.into(), color(0.55, 0.42, 0.92))] },
             alpha: 1.0.into(),
-            rim: 0.0,
+            rim: 0.0.into(),
             light: None,
             border: Some((2.5.into(), white.clone())),
             glass_spec: None,
@@ -137,7 +137,7 @@ impl Script for Showcase {
         e.behaviors.push(Behavior::Follow { prop: box_w, to: tag_w + 32.0 });
         e.paint(Instr::Group { shadow: None });
         e.paint(Instr::Shape { shape: Shape::Rect { center: (360.0.into(), 326.0.into()), half_size: (box_w * 0.5, tag_h * 0.5 + 7.0), radius: 16.0.into() }, fusion: 0.0.into() });
-        e.paint(Instr::Fill { paint: color(0.62, 0.84, 0.74).into(), alpha: 1.0.into(), rim: 0.0, light: None, border: None, glass_spec: None });
+        e.paint(Instr::Fill { paint: color(0.62, 0.84, 0.74).into(), alpha: 1.0.into(), rim: 0.0.into(), light: None, border: None, glass_spec: None });
         e.paint(Instr::Text { content: Content::Live(tag), at: (360.0.into(), 326.0.into()), anchor: (0.5, 0.5), width: None, style: Style::new(15.0, color(0.07, 0.12, 0.10)).weight(500), alpha: 1.0.into(), measure: Some((tag_w, tag_h)) });
 
         e.surfaces = vec![Surface { height: 372, ..Default::default() }];

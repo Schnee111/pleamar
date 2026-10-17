@@ -132,6 +132,18 @@ impl LayoutKey {
         }
     }
 
+    /// The same, at another size: a text whose size is worked out each frame.
+    pub fn sized(mut self, px: f32) -> LayoutKey {
+        self.px = px.to_bits();
+        self
+    }
+
+    /// The same, in another weight: a text whose weight is worked out each frame.
+    pub fn weighted(mut self, weight: u16) -> LayoutKey {
+        self.weight = weight;
+        self
+    }
+
     /// A text already without its marks, and what they marked.
     pub fn marked(text: String, marks: Vec<(u32, u32, u8)>, e: &Style, width: Option<f32>) -> LayoutKey {
         LayoutKey { text, marks, ..LayoutKey::new("", e, width) }

@@ -59,7 +59,7 @@ impl Script for Marea {
         e.paint(Instr::Shape { shape: panel.clone(), fusion: fusion * panel_w.e().smoothstep(0.0, 40.0) });
         e.paint(Instr::Fill { paint: color(0.082, 0.086, 0.086).into(),
             alpha: 1.0.into(),
-            rim: 0.05,
+            rim: 0.05.into(),
             light: Some(Light { amount: 0.03, from_y: orb_y - ANCHOR_Y, height: PANEL_H }),
             border: None,
             glass_spec: None,
