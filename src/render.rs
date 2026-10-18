@@ -2360,6 +2360,15 @@ pub fn run(
                     2 => 0x112,
                     b => 0x110 + *b as u32,
                 };
+                // Pressed while still held for a window: its release was lost
+                // on the way. The window is let go first, or it took every
+                // move after for a drag (text selected, a window carried).
+                if *down {
+                    if let Some(k) = nest_buttons.iter().position(|c| *c == code) {
+                        nest_buttons.remove(k);
+                        send(ToNest::Button { code, down: false });
+                    }
+                }
                 if *down {
                     if let Some((slot, _, _)) = local {
                         send(ToNest::Button { code, down: true });
