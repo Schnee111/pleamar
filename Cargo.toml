@@ -7,7 +7,7 @@ description = "A desktop shell language and runtime where animation does not dep
 repository = "https://github.com/k4ditano/pleamar"
 
 [dependencies]
-arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control", "image-data"] }
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 cosmic-text = { version = "0.19.0", default-features = false, features = ["std", "swash"] }
@@ -44,6 +44,8 @@ wayland-client = { version = "0.31", features = ["system"] }
 # The protocols every compositor understands: windows and desktops.
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# What the clipboard offers (a picture with its HTML), without reading it.
+wl-clipboard-rs = "0.9"
 # fontconfig gives the system's font aliases ("sans-serif" → whichever it is). Without it,
 # on Windows and macOS, fontdb reads the font folders directly.
 cosmic-text = { version = "0.19.0", default-features = false, features = ["fontconfig"] }
