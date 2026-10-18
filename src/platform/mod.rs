@@ -693,7 +693,16 @@ pub fn agent_cursor_to(_: CursorOn, _: f32, _: f32, _: bool) -> std::sync::Arc<s
 /// The system clipboard. `arboard` speaks it on all three systems; it lives
 /// here so the core keeps knowing nothing about any of them.
 pub fn clipboard_read() -> Option<String> {
-    arboard::Clipboard::new().ok()?.get_text().ok()
+    let mut c = arboard::Clipboard::new().ok()?;
+    let text = c.get_text().ok()?;
+    // An image copied from a browser comes with its HTML (`<img src=…>`) as
+    // text: that is not what was copied. With a picture there too, no text:
+    // the key goes on to the scene, which may take the picture.
+    let head = text.trim_start().get(..64).unwrap_or(text.trim_start()).to_ascii_lowercase();
+    if (head.starts_with("<meta") || head.starts_with("<img") || head.starts_with("<html") || head.starts_with("<!--")) && text.contains("<img") && c.get_image().is_ok() {
+        return None;
+    }
+    Some(text)
 }
 
 pub fn clipboard_write(text: &str) {
