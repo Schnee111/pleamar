@@ -4912,7 +4912,9 @@ impl Editing {
                 if name == "x" && self.delete_selection(t) { KeyOutcome::Changed } else { KeyOutcome::Moved }
             }
             "v" if m.ctrl => {
-                let Some(pasted) = crate::platform::clipboard_read() else { return KeyOutcome::Moved };
+                // Nothing to write (a picture copied): the key goes on to the
+                // scene's rules and logic, which may take the picture.
+                let Some(pasted) = crate::platform::clipboard_read().filter(|p| !p.is_empty()) else { return KeyOutcome::Unhandled };
                 // A field is single-line: whatever comes with line breaks, without them.
                 let pasted: String = pasted.chars().filter(|c| !c.is_control()).collect();
                 self.delete_selection(t);
