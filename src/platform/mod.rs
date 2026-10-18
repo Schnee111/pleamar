@@ -693,28 +693,37 @@ pub fn agent_cursor_to(_: CursorOn, _: f32, _: f32, _: bool) -> std::sync::Arc<s
 /// The system clipboard. `arboard` speaks it on all three systems; it lives
 /// here so the core keeps knowing nothing about any of them.
 pub fn clipboard_read() -> Option<String> {
-    let text = arboard::Clipboard::new().ok()?.get_text().ok()?;
-    // An image copied from a browser comes with its HTML (`<img src=…>`) as
-    // text: that is not what was copied. With a picture there too, no text:
-    // the key goes on to the scene, which may take the picture.
-    let head = text.trim_start().get(..64).unwrap_or(text.trim_start()).to_ascii_lowercase();
-    if (head.starts_with("<meta") || head.starts_with("<img") || head.starts_with("<html") || head.starts_with("<!--")) && text.contains("<img") && picture_offered() {
-        return None;
+    #[cfg(target_os = "linux")]
+    if let Some(read) = wayland_clipboard_read() {
+        return read;
     }
-    Some(text)
+    arboard::Clipboard::new().ok()?.get_text().ok()
 }
 
-/// Whether what was copied comes as a picture too (image/png, image/jpeg…):
-/// asked of the clipboard, without reading the picture.
+/// Wayland's own clipboard, asked first: arboard falls back to X11's
+/// without saying so, and that one may hold something copied long before.
+/// `None`: not asked (no Wayland, or it cannot be asked); `Some(None)`:
+/// nothing to write —a picture copied, which comes with its HTML as text,
+/// is a picture, not that HTML: the key goes on to the scene, which may take
+/// it—.
 #[cfg(target_os = "linux")]
-fn picture_offered() -> bool {
-    use wl_clipboard_rs::paste::{get_mime_types, ClipboardType, Seat};
-    get_mime_types(ClipboardType::Regular, Seat::Unspecified).is_ok_and(|types| types.iter().any(|t| t.starts_with("image/")))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn picture_offered() -> bool {
-    false
+fn wayland_clipboard_read() -> Option<Option<String>> {
+    use std::io::Read;
+    use wl_clipboard_rs::paste::{get_contents, get_mime_types_ordered, ClipboardType, MimeType, Seat};
+    std::env::var_os("WAYLAND_DISPLAY")?;
+    let types = match get_mime_types_ordered(ClipboardType::Regular, Seat::Unspecified) {
+        Ok(t) => t,
+        Err(wl_clipboard_rs::paste::Error::ClipboardEmpty | wl_clipboard_rs::paste::Error::NoMimeType) => return Some(None),
+        Err(_) => return None,
+    };
+    let plain = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT"];
+    // No plain text: a picture (with its HTML), or something else that is
+    // not words to write.
+    let Some(kind) = plain.iter().find(|p| types.iter().any(|t| t == *p)) else { return Some(None) };
+    let (mut pipe, _) = get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Specific(kind)).ok()?;
+    let mut text = String::new();
+    pipe.read_to_string(&mut text).ok()?;
+    Some(Some(text))
 }
 
 pub fn clipboard_write(text: &str) {
