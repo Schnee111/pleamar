@@ -178,6 +178,8 @@ struct Candidate {
     cursor: Cursor,
     /// What it carries when dragged out to another program (`carries:`).
     carries: Option<Content>,
+    /// `carry_icon:`: the picture under the pointer while it is dragged out.
+    carry_icon: Option<Content>,
     /// `label:` and `agent:`: what it is, said in words, and who may use it.
     label: Option<Content>,
     reach: Reach,
@@ -1647,6 +1649,20 @@ impl<'a> Compiler<'a> {
             },
             None => None,
         };
+        // `carry_icon: "{c.icon}"`: the path of a PNG that goes under the pointer while `carries:` is dragged out.
+        let carry_icon = match p.get_mut("carry_icon") {
+            Some(c) => match c.peek() {
+                Some(TokenKind::Str(s)) => {
+                    let s = s.clone();
+                    let k = self.content_of_one(&s, &c.tokens[c.i])?;
+                    c.i += 1;
+                    c.expect_end()?;
+                    Some(k)
+                }
+                _ => return c.error("`carry_icon:` takes a text with the path of a PNG, with holes if it needs them: `carry_icon: \"{file.icon}\"`"),
+            },
+            None => None,
+        };
         let label = match p.get_mut("label") {
             Some(c) => Some(self.label(c)?),
             None => None,
@@ -1785,7 +1801,7 @@ impl<'a> Compiler<'a> {
         // which it is painted. Whether it is or not is decided at the end: see `materialize_zones`.
         if let Some(name) = &name {
             let name = &self.declare_zone(name);
-            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: carries.is_some() || handle.is_some(), cursor, carries, label, reach, within: None, told, handle });
+            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: carries.is_some() || handle.is_some(), cursor, carries, carry_icon, label, reach, within: None, told, handle });
         }
         Ok(ParsedShape { shape, color, opacity, blend, size: extent, glass_spec })
     }
@@ -3500,7 +3516,7 @@ impl<'a> Compiler<'a> {
             at: self.e.instrs.len(),
             zblock: self.zblock,
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
-            active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text, carries: None, label, reach, within: None, told: None, handle: None,
+            active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text, carries: None, carry_icon: None, label, reach, within: None, told: None, handle: None,
         });
         self.last_size = Some((width.clone(), height.into()));
         self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret });
@@ -5310,7 +5326,7 @@ impl<'a> Compiler<'a> {
                 under.push(t.clone());
             }
             let bounds = Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: zone_corner };
-            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor, carries: None, label: None, reach: Reach::Any, within: None, told: None, handle: None });
+            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor, carries: None, carry_icon: None, label: None, reach: Reach::Any, within: None, told: None, handle: None });
             // A hidden stack does not catch the mouse: neither its children nor IT, which with
             // `view:` has a zone of its own —the one for the wheel and dragging— the
             // size of its window. Hidden and in front, that zone
@@ -6062,6 +6078,7 @@ impl<'a> Compiler<'a> {
             forced: true,
             cursor: Cursor::Normal,
             carries: None,
+            carry_icon: None,
             label: None,
             reach: Reach::Any,
             within: None,
@@ -6319,6 +6336,7 @@ impl<'a> Compiler<'a> {
                 self.e.zones[z.0 as usize].at = k.at;
                 self.e.zones[z.0 as usize].zblock = k.zblock;
                 self.e.zones[z.0 as usize].carries = k.carries;
+                self.e.zones[z.0 as usize].carry_icon = k.carry_icon;
                 self.e.zones[z.0 as usize].label = k.label;
                 self.e.zones[z.0 as usize].reach = k.reach;
                 self.e.zones[z.0 as usize].within = k.within.and_then(|w| self.zones.get(&w).copied());

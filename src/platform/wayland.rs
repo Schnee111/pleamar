@@ -1548,7 +1548,7 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
     let qh = events.handle();
     let compositor = CompositorState::bind(&globals, &qh).expect("no wl_compositor");
     if let Ok(m) = DataDeviceManagerState::bind(&globals, &qh) {
-        let _ = DRAGS.set(Drags { connection: connection.clone(), qh: qh.clone(), manager: m.data_device_manager().clone(), device: Mutex::default(), press: Mutex::default(), under_way: Mutex::default() });
+        let _ = DRAGS.set(Drags { connection: connection.clone(), qh: qh.clone(), manager: m.data_device_manager().clone(), device: Mutex::default(), press: Mutex::default(), under_way: Mutex::default(), compositor: CompositorState::bind(&globals, &qh).expect("no wl_compositor"), shm: globals.bind::<WlShm, _, _>(&qh, 1..=1, Silent).ok(), icon: Mutex::default() });
     }
     if let Ok(m) = globals.bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, Silent) {
         let _ = BACKGROUND_EFFECTS.set(m);
@@ -1958,12 +1958,16 @@ struct Drags {
     device: Mutex<Option<wayland_client::protocol::wl_data_device::WlDataDevice>>,
     press: Mutex<Option<(u32, wl_surface::WlSurface)>>,
     under_way: Mutex<Option<(wayland_client::protocol::wl_data_source::WlDataSource, Vec<(String, Vec<u8>)>)>>,
+    /// What makes the picture under the pointer while it lasts (`carry_icon:`): the compositor and shm to make it with, and what it is made of until it ends.
+    compositor: CompositorState,
+    shm: Option<WlShm>,
+    icon: Mutex<Option<(wl_surface::WlSurface, WlBuffer, WlShmPool, std::os::fd::OwnedFd)>>,
 }
 static DRAGS: std::sync::OnceLock<Drags> = std::sync::OnceLock::new();
 
 /// Starts dragging `text` out to whatever program it is let go on. Files and
 /// links go as a list of addresses (and as their text); anything else, as text.
-pub fn start_drag(text: &str) -> bool {
+pub fn start_drag(text: &str, icon: Option<&str>) -> bool {
     let Some(d) = DRAGS.get() else { return false };
     let Some((serial, origin)) = d.press.lock().unwrap().clone() else { return false };
     let Some(device) = d.device.lock().unwrap().clone() else { return false };
@@ -1978,7 +1982,13 @@ pub fn start_drag(text: &str) -> bool {
     if source.version() >= 3 {
         source.set_actions(DndAction::Copy);
     }
-    device.start_drag(Some(&source), &origin, None, serial);
+    // The picture under the pointer, if the zone gave one and it can be read: its top left is a little up and to the left of the pointer, so the pointer is not hidden.
+    let held = icon.and_then(|path| drag_icon(d, path));
+    device.start_drag(Some(&source), &origin, held.as_ref().map(|(s, _, _, _)| s), serial);
+    if let Some(old) = d.icon.lock().unwrap().take() {
+        drop_icon(old);
+    }
+    *d.icon.lock().unwrap() = held;
     let _ = d.connection.flush();
     if let Some((old, _)) = d.under_way.lock().unwrap().replace((source, offers)) {
         old.destroy();
@@ -2011,8 +2021,56 @@ fn end_drag(source: &wayland_client::protocol::wl_data_source::WlDataSource) {
     let mut under_way = d.under_way.lock().unwrap();
     if under_way.as_ref().is_some_and(|(s, _)| s == source) {
         *under_way = None;
+        if let Some(held) = d.icon.lock().unwrap().take() {
+            drop_icon(held);
+        }
     }
     source.destroy();
+}
+
+/// A PNG as the surface of a drag: read, premultiplied (what Argb8888 means) and put in shared memory. Bigger than 512 px a side, or unreadable, it is none.
+fn drag_icon(d: &Drags, path: &str) -> Option<(wl_surface::WlSurface, WlBuffer, WlShmPool, std::os::fd::OwnedFd)> {
+    let shm = d.shm.as_ref()?;
+    let img = image::open(path).ok()?.to_rgba8();
+    let (w, h) = img.dimensions();
+    if w == 0 || h == 0 || w > 512 || h > 512 {
+        return None;
+    }
+    let len = w as usize * h as usize * 4;
+    let fd = memfd(len)?;
+    // SAFETY: a mapping of the file just made, as long as it, written here and let go before it is used by anybody else.
+    unsafe {
+        let map = libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, std::os::fd::AsRawFd::as_raw_fd(&fd), 0);
+        if map == libc::MAP_FAILED {
+            return None;
+        }
+        let out = std::slice::from_raw_parts_mut(map as *mut u8, len);
+        for (o, p) in out.chunks_exact_mut(4).zip(img.pixels()) {
+            let a = p.0[3] as u32;
+            let mul = |c: u8| ((c as u32 * a + 127) / 255) as u8;
+            o.copy_from_slice(&[mul(p.0[2]), mul(p.0[1]), mul(p.0[0]), p.0[3]]);
+        }
+        libc::munmap(map, len);
+    }
+    let pool = shm.create_pool(std::os::fd::AsFd::as_fd(&fd), len as i32, &d.qh, Silent);
+    let buffer = pool.create_buffer(0, w as i32, h as i32, w as i32 * 4, wl_shm::Format::Argb8888, &d.qh, Silent);
+    let wl = d.compositor.create_surface(&d.qh);
+    let (hx, hy) = (-(w.min(28) as i32), -(h.min(28) as i32));
+    if wl.version() >= 5 {
+        wl.attach(Some(&buffer), 0, 0);
+        wl.offset(hx, hy);
+    } else {
+        wl.attach(Some(&buffer), hx, hy);
+    }
+    wl.damage_buffer(0, 0, w as i32, h as i32);
+    wl.commit();
+    Some((wl, buffer, pool, fd))
+}
+
+fn drop_icon((surface, buffer, pool, _fd): (wl_surface::WlSurface, WlBuffer, WlShmPool, std::os::fd::OwnedFd)) {
+    surface.destroy();
+    buffer.destroy();
+    pool.destroy();
 }
 
 /// Something let go on a surface whose data has not arrived yet.

@@ -1311,6 +1311,8 @@ pub struct Zone {
     pub zblock: Option<u16>,
     /// Dragged out, what it gives another program: a file, a link, a text.
     pub carries: Option<Content>,
+    /// While it is dragged out (`carries:`), the picture that goes under the pointer: the path of a PNG, as a text with holes (`carry_icon:`). Without it the drag has none.
+    pub carry_icon: Option<Content>,
     /// What it is, said in words for whoever cannot see it (`label:`): an
     /// agent, a screen reader. Without it, the texts drawn inside it.
     pub label: Option<Content>,
@@ -2078,7 +2080,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None, carries: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None, handle: None });
+        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None, carries: None, carry_icon: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None, handle: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be

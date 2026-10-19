@@ -1,11 +1,12 @@
 // expect: ok
-// A file that can be dragged out to another program, and a panel that goes
-// when it is.
+// A file that can be dragged out to another program (with a picture in the hand
+// while it is), and a panel that goes when it is.
 scene Carries {
     surface { size: 300, 120; kind: window; title: "carries" }
     text path = "/tmp/hello.txt"
+    text icon = "/tmp/hello-icon.png"
     fact open = true
     box { from: 10, 10; size: 280, 100; corner: 12; color: #1d2b27; show: open }
-    zone box file { from: 10, 10; size: 280, 100; cursor: grab; carries: "{path}"; active: open }
+    zone box file { from: 10, 10; size: 280, 100; cursor: grab; carries: "{path}"; carry_icon: "{icon}"; active: open }
     on carry file { open = false }
 }
