@@ -1556,6 +1556,7 @@ dependencies = [
  "wayland-protocols",
  "wayland-protocols-wlr",
  "wgpu",
+ "wl-clipboard-rs",
  "zbus",
 ]
 
