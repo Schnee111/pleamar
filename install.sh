@@ -258,6 +258,28 @@ else
             case "$yes" in y|Y|s|S) sh -c "$hint" || true ;; esac
         fi
     fi
+    # Build (Super+B) and Marea's chat run their AI engine with Node, in a
+    # bubblewrap sandbox; npm fetches it the first time. Without them the
+    # rest works and Build says what is missing: said here too, and offered.
+    need=""
+    command -v node > /dev/null || need="$need node"
+    command -v npm > /dev/null || need="$need npm"
+    command -v bwrap > /dev/null || need="$need bwrap"
+    if [ -n "$need" ]; then
+        say "Build (Super+B) and Marea's chat need Node.js, npm and bubblewrap; missing:$need"
+        if command -v pacman > /dev/null; then hint="sudo pacman -S --needed nodejs npm bubblewrap"
+        elif command -v apt > /dev/null; then hint="sudo apt install nodejs npm bubblewrap"
+        elif command -v dnf > /dev/null; then hint="sudo dnf install nodejs npm bubblewrap"
+        elif command -v zypper > /dev/null; then hint="sudo zypper install nodejs-default npm-default bubblewrap"
+        else hint="your distribution's Node.js, npm and bubblewrap"
+        fi
+        echo "    $hint"
+        if [ -t 0 ] && [ "${hint#sudo }" != "$hint" ]; then
+            printf 'pleamar · run it now? [y/N] '
+            read -r yes
+            case "$yes" in y|Y|s|S) sh -c "$hint" || true ;; esac
+        fi
+    fi
 fi
 # The AI agents you have learn pleamar (and it refreshes itself on updates).
 "$bin/pleamar" --install-skill | sed 's/^/    /'
