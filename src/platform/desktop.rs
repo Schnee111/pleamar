@@ -135,7 +135,7 @@ impl App {
             ("generic_name".into(), text(self.generic_name)),
             ("comment".into(), text(self.comment)),
             ("keywords".into(), text(self.keywords)),
-            // `Terminal=true`: it runs in a terminal (`btop`).
+            // `Terminal=true`: it runs in a terminal (`btop`), and `apps.launch` opens one for it.
             ("terminal".into(), SysValue::Bool(self.terminal)),
             ("actions".into(), SysValue::List(
                 self.actions
@@ -160,12 +160,26 @@ impl App {
 /// permission to "see the apps".
 pub fn launch(command: &str) -> Result<(), String> {
     use std::process::{Command, Stdio};
-    if !installed().iter().any(|a| a.exec == command || a.actions.iter().any(|x| x.exec == command)) {
+    let apps: Vec<App> = installed().into_iter().filter(|a| a.exec == command || a.actions.iter().any(|x| x.exec == command)).collect();
+    if apps.is_empty() {
         return Err(format!("'{command}' is none of the installed applications: apps.launch only launches what the `apps` service has reported"));
     }
     let mut launch = Command::new("setsid");
     crate::child_env(&mut launch);
-    let mut child = launch.args(["-f", "sh", "-c", command]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
+    launch.arg("-f");
+    // On its own it would have nothing to talk to (its stdin is /dev/null):
+    // the user's terminal runs it, the one xdg-terminal-exec says. If two
+    // entries run the same command and one wants a terminal, it gets one.
+    if let Some(app) = apps.iter().find(|a| a.terminal) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let runnable = |d: std::path::PathBuf| std::fs::metadata(d.join("xdg-terminal-exec")).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+        if !std::env::split_paths(&path).any(runnable) {
+            return Err(format!("'{}' runs in a terminal, and there is no xdg-terminal-exec to open one", app.name));
+        }
+        launch.arg("xdg-terminal-exec");
+    }
+    let mut child = launch.args(["sh", "-c", command]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
     std::thread::spawn(move || {
         let _ = child.wait();
     });
