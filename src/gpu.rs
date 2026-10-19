@@ -1850,7 +1850,6 @@ pub struct Sheet {
     /// is painted again. And how many frames it has gone without that.
     kept: Option<(wgpu::Texture, wgpu::TextureView)>,
     idle_kept_frames: u32,
-    #[allow(dead_code)]
     pub name: String,
     pub mhz: i32,
     pub scale: f32,
