@@ -4342,6 +4342,8 @@ pub fn run(
         // Painting only where something changed needs to know where: not with
         // particles, a shader that reads the time or an image that moves.
         let knows_where = !all_changed && !draw.timed && !draw.particles_alive && draw.particle_marks.is_empty() && draw.wake_at.is_none();
+        // A surface found not shown while painting: the pace is given again after.
+        let mut pace_again = false;
         for l in &mut sheets {
             // Closed, it is painted once, empty, and that is it: that, yes, always, whether something changes or not.
             if !l.open && std::mem::replace(&mut l.cleared, true) {
@@ -4398,6 +4400,57 @@ pub fn run(
                     crate::gpu::BackdropCapture::Idle => {}
                 }
             }
+            // Waiting for its screen (FIFO), it is handed a frame only once the
+            // compositor has answered the last one: the driver holds the
+            // present until then, and one that never answers —an output not
+            // shown, a headless one— held the whole render there, painting
+            // nothing and answering no `--say` (issue #69). It waits for that
+            // answer as long as a present would, a few refreshes; past that,
+            // the round goes on without it, and after three in a row it is
+            // taken as not shown (`unseen`): another surface sets the pace, or
+            // with none the clock does. Unseen, it does not wait at all: the
+            // answer that shows it again makes it seen.
+            let fifo = g.blocks_on_screen(l) && !op.no_vsync && !op.naive;
+            if fifo && l.open && in_flight.iter().any(|f| f.0 == l.id) {
+                if !l.unseen {
+                    let period = Duration::from_secs_f64(1000.0 / l.mhz.max(1) as f64);
+                    let limit = Instant::now() + (period * 3).max(Duration::from_millis(50));
+                    while in_flight.iter().any(|f| f.0 == l.id) {
+                        let left = limit.saturating_duration_since(Instant::now());
+                        if left.is_zero() {
+                            break;
+                        }
+                        match rx.recv_timeout(left) {
+                            Ok(ToRender::Frame(k)) => {
+                                frame_ready |= frame_requested == Some(k);
+                                if !seen_again.contains(&k) {
+                                    seen_again.push(k);
+                                }
+                                in_flight.retain(|f| f.0 != k);
+                            }
+                            Ok(m) => held_back.push(m),
+                            Err(RecvTimeoutError::Timeout) => {}
+                            Err(RecvTimeoutError::Disconnected) => return,
+                        }
+                    }
+                }
+                if in_flight.iter().any(|f| f.0 == l.id) {
+                    if !l.unseen {
+                        l.missed += 1;
+                        if l.missed >= 3 {
+                            l.unseen = true;
+                            pace_again = true;
+                            println!("render · the compositor is not showing surface {}: it is not handed frames until it shows it again", l.id);
+                        }
+                    }
+                    skip(l);
+                    up_to_date += 1;
+                    continue;
+                }
+            }
+            if fifo {
+                l.missed = 0;
+            }
             // The one that sets the pace asks the compositor to notify when it wants another.
             let asks = l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
             // The others ask too, and while their last frame has not been
@@ -4420,8 +4473,8 @@ pub fn run(
             // And what it owes.
             let with_owed: Option<Vec<[f32; 4]>> = (!l.owed_damage.is_empty()).then(|| changed.iter().chain(&l.owed_damage).copied().collect());
             l.owed_damage.clear();
-            let was_painted = g.paint(l, &draw, &uniforms, asks || others, (knows_where && l.painted == Some(where_)).then(|| with_owed.as_deref().unwrap_or(&changed[..])));
-            if was_painted && others && answers.contains(&l.id) {
+            let was_painted = g.paint(l, &draw, &uniforms, asks || others || fifo, (knows_where && l.painted == Some(where_)).then(|| with_owed.as_deref().unwrap_or(&changed[..])));
+            if was_painted && ((others && answers.contains(&l.id)) || (fifo && l.open)) {
                 in_flight.retain(|f| f.0 != l.id);
                 in_flight.push((l.id, Instant::now()));
             }
@@ -4453,6 +4506,10 @@ pub fn run(
                 }
                 prof_sheets[l.view.surface] += 1;
             }
+        }
+        if pace_again {
+            assign_pace(g, &mut sheets, size, op.no_vsync);
+            sheets.sort_by_key(|l| l.drives_pace);
         }
         // A sheet with a lens that has not painted this round has stayed
         // still: what is behind is watched. Watching while painting is no use,
