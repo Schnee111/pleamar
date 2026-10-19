@@ -37,7 +37,7 @@ pub enum SysValue {
 /// The names are the same everywhere:
 ///  · `workspaces` → `{ active = 3, list = { { id, name, windows, monitor }, … } }`
 ///  · `window`     → `{ title, class }`
-///  · `apps`       → `{ { name, exec, icon }, … }`, once
+///  · `apps`       → `{ { name, exec, icon, …, terminal, actions }, … }`, once (see `desktop`)
 ///  · `audio`      → `{ volume = 0.54, muted = false }`
 ///  · `battery`    → `{ present, percent, charging }`
 ///  · `network`    → `{ online, kind = "wired" | "wifi" | "none", name, strength, wifi, networks }` (see `networkmanager`)

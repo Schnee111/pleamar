@@ -358,7 +358,7 @@ service tray { list: icons }
 | `media` | `players`: `{ id, name, playing, chosen }`, by bus name |
 | `window` | `list`: `{ id, title, class, monitor, active, minimized }` (compositors with wlr-foreign-toplevel) |
 | `workspaces` | `list`: `{ id, name, windows, monitor, active }` |
-| `apps` | `list`: `{ name, exec, icon, id, wmclass, local_name, categories }` |
+| `apps` | `list`: `{ name, exec, icon, id, wmclass, local_name, categories, generic_name, comment, keywords, terminal, actions }`; `actions`: `{ id, name, local_name, exec, icon }` |
 | `tray` | `list`: `{ key, id, title, status, icon, menu }` |
 | `notifications` | `list`: `{ id, app, title, body, icon, image, urgency, time, actions }` |
 | `notification_history` | `list`: the same records, the ones that expired unseen, newest first, the last 50 |
