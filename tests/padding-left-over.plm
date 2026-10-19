@@ -1,0 +1,10 @@
+// expect: error «this is left over here»
+// `padding: 4 8` is refused as `size: 1 + 0` on a surface is: the same leftover, one answer (issue #68).
+language 0.4
+scene PaddingLeftOver {
+    surface { size: 300, 60 }
+    row bar {
+        padding: 4 8
+        text "hi" { size: 12 }
+    }
+}

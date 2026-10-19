@@ -1,5 +1,6 @@
-// expect: note «this is left over here»
-// A value with something after it is said, not dropped in silence: `width: 200 200` was a 200 (issue #58).
+// expect: error «this is left over here»
+// A value with something after it is refused, not dropped in silence: `width: 200 200` was a 200 (issue #58),
+// and only noted until a plain number's slot and this one had to agree (issue #68).
 language 0.4
 scene LeftOver {
     surface { size: 300, 60 }

@@ -530,9 +530,9 @@ The slots that take a plain number —a surface's `margin:` and `reserve:`, an
 image's declared size— say so too when something follows it, instead of reading
 its first number and dropping the rest.
 And any value read with something left after it —`width: 200 200`, `at: 10,
-10, 10`, a `;` forgotten between two properties— is said when the scene loads
-(`note · file:line:column: this is left over here`), with where; the scene still
-loads, drawn without what was left over, as it was before it was said.
+10, 10`, a `;` forgotten between two properties— is an error too, with where
+(`this is left over here: what follows the value would be dropped`): until
+0.4.20 it was only a note, and the scene loaded drawn without it.
 
 **A shadow can be of any colour, and everything about it is an expression.**
 Black if no colour is said, which is what a shadow is on paper. On a desktop of

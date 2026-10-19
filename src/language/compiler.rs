@@ -1812,13 +1812,14 @@ impl<'a> Compiler<'a> {
             left.sort_unstable();
             match r {
                 Err(f) => self.push_error(f),
-                // Said, not refused: scenes that have one were drawn without it
-                // all along, and still load (`padding: 6, 9` was a 6).
+                // Refused, as a plain number's slot refuses what follows it: it
+                // was only noted, and the scene loaded drawn without it
+                // (`padding: 6, 9` was a 6), so the same mistake had two
+                // answers (issue #68).
                 Ok(()) => {
                     for (l, c) in left {
                         if LEFTOVER_SAID.with(|s| s.borrow_mut().insert((l, c))) {
-                            let file = self.files.get(l / super::PER_FILE).map_or("", String::as_str);
-                            eprintln!("note   · {file}:{}:{c}: this is left over here: what follows the value is not used", l % super::PER_FILE);
+                            self.push_error(CompileError::at(l, c, "this is left over here: what follows the value would be dropped"));
                         }
                     }
                 }
