@@ -1038,10 +1038,8 @@ pub fn run(
                         println!("render · surface {} on {} · {}×{} · scale {} · {:.0} Hz{which}", n.id, n.name, n.size.0, n.size.1, n.scale, n.mhz as f32 / 1000.0);
                     }
                     sheets.push(g.sheet(*n, size));
-                    // How many monitors are showing something right now.
                     if let Some(i) = scene.facts.iter().position(|h| h.0 == "screens.count") {
-                        let how_many = sheets.iter().filter(|l| l.view.popup.is_none()).map(|l| l.view.surface).collect::<std::collections::HashSet<_>>().len();
-                        facts[i] = how_many as f32;
+                        facts[i] = screens_showing(&sheets, &scene.surfaces) as f32;
                     }
                     assign_pace(g, &mut sheets, size, op.no_vsync);
                     region = vec![[i32::MIN; 4]];
@@ -1050,6 +1048,9 @@ pub fn run(
                     sheets.retain(|l| l.id != id);
                     crate::platform::sheet_released(id);
                     println!("render · surface {id} gone; {} left", sheets.len());
+                    if let Some(i) = scene.facts.iter().position(|h| h.0 == "screens.count") {
+                        facts[i] = screens_showing(&sheets, &scene.surfaces) as f32;
+                    }
                     if let Some(g) = &gpu {
                         assign_pace(g, &mut sheets, size, op.no_vsync);
                     }
@@ -4806,6 +4807,19 @@ fn error_banner(message: &str, width: f32) -> Vec<Instr> {
             measure: None,
         },
     ]
+}
+
+/// How many monitors are showing something right now: one for each monitor a sheet is on,
+/// not one for each surface: the scene's named ones sit on the same monitor as its main
+/// one and are not another monitor. The lock's are left out: they go without a
+/// `SheetGone`, and their name is the monitor's with " (lock)" after it.
+fn screens_showing(sheets: &[Sheet], surfaces: &[Surface]) -> usize {
+    sheets
+        .iter()
+        .filter(|l| l.view.popup.is_none() && !surfaces.get(l.view.surface).is_some_and(|s| s.lock_screen))
+        .map(|l| l.name.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len()
 }
 
 /// A single sheet waits for its screen —the one of the fastest monitor— and the others
