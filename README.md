@@ -286,7 +286,8 @@ cargo build --release
 ```
 
 Options used daily: `--screen A,B` (which monitors), `--say` (talk to it from
-outside, or from a compositor shortcut), `--mouse "360,90@500 click@3200"` (a
+outside, or from a compositor shortcut; of two scenes with one name, it
+reaches the one on your terminal's display), `--mouse "360,90@500 click@3200"` (a
 pretend mouse, to rehearse without touching the real one), `--stall MS` (stall
 the logic on purpose and watch the screen carry on).
 

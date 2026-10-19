@@ -480,7 +480,10 @@ pub fn listen_for_commands(scene: &str, receive: Commands) {
         path = other;
     }
     let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("display"));
     let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else { return };
+    *OWN_SOCKET.lock().unwrap() = Some(path.clone());
+    note_display();
     std::thread::Builder::new()
         .name("commands".into())
         .spawn(move || {
@@ -501,6 +504,72 @@ pub fn listen_for_commands(scene: &str, receive: Commands) {
             }
         })
         .ok();
+}
+
+/// Where this scene listens, once it does, and the display it is shown on,
+/// once it is connected: with both, the display is written beside the socket
+/// (`notes.display`), for `--say` to tell a scene on the caller's display
+/// from one of the same name on another —a nested compositor's copy of the
+/// lock screen, and the real one (issue #67)—.
+static OWN_SOCKET: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+static SHOWN_ON: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The display a program started from here talks to: `WAYLAND_DISPLAY`, a
+/// name in `XDG_RUNTIME_DIR` or a path, as one path. Unknown with none (a
+/// terminal over ssh, a scene drawn by pleamar-wm's own compositor).
+pub fn display_here() -> Option<String> {
+    let d = std::env::var("WAYLAND_DISPLAY").ok().filter(|d| !d.is_empty())?;
+    if d.starts_with('/') {
+        return Some(d);
+    }
+    let run = std::env::var("XDG_RUNTIME_DIR").ok().filter(|r| !r.is_empty())?;
+    Some(format!("{}/{d}", run.trim_end_matches('/')))
+}
+
+/// The scene is connected to that display (the Wayland side says so).
+pub fn shown_on(display: String) {
+    *SHOWN_ON.lock().unwrap() = Some(display);
+    note_display();
+}
+
+fn note_display() {
+    #[cfg(unix)]
+    if let (Some(sock), Some(d)) = (OWN_SOCKET.lock().unwrap().clone(), SHOWN_ON.lock().unwrap().clone()) {
+        let _ = std::fs::write(sock.with_extension("display"), d);
+    }
+}
+
+/// Which socket `--say NAME` reaches, and a word for the caller if that is not
+/// obviously the one meant. Of the scenes called NAME —the one that has the
+/// name and those that took `NAME-pid` because it was taken—, the one shown
+/// on the caller's display; with none there, NAME as ever, and if it is shown
+/// on another display, the caller is told which.
+#[cfg(unix)]
+fn reach(scene: &str) -> Result<(std::path::PathBuf, Option<String>), String> {
+    let path = command_socket_path(scene).ok_or("I don't know where the sockets are")?;
+    let Some(mine) = display_here() else { return Ok((path, None)) };
+    let shown = |p: &std::path::Path| std::fs::read_to_string(p.with_extension("display")).ok().map(|d| d.trim().to_owned());
+    let alive = |p: &std::path::Path| std::os::unix::net::UnixStream::connect(p).is_ok();
+    if shown(&path).as_deref() == Some(mine.as_str()) {
+        return Ok((path, None));
+    }
+    let dir = path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    let prefix = format!("{scene}-");
+    let mut others: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .map(|d| {
+            d.filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "sock"))
+                .filter(|p| p.file_stem().and_then(|n| n.to_str()).and_then(|n| n.strip_prefix(prefix.as_str())).is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())))
+                .collect()
+        })
+        .unwrap_or_default();
+    others.sort();
+    if let Some(p) = others.into_iter().find(|p| shown(p).as_deref() == Some(mine.as_str()) && alive(p)) {
+        return Ok((p, None));
+    }
+    let word = shown(&path).filter(|_| alive(&path)).map(|there| format!("note · the '{scene}' that answers is shown on {there}, not on this terminal's display ({mine}): none called '{scene}' is shown there"));
+    Ok((path, word))
 }
 
 #[cfg(unix)]
@@ -547,7 +616,10 @@ pub fn running_scenes() -> Vec<String> {
 #[cfg(unix)]
 pub fn ask(scene: &str, command: &str, wait: std::time::Duration) -> Result<String, String> {
     use std::io::Write;
-    let path = command_socket_path(scene).ok_or("I don't know where the sockets are")?;
+    let (path, word) = reach(scene)?;
+    if let Some(w) = word {
+        eprintln!("{w}");
+    }
     let mut s = std::os::unix::net::UnixStream::connect(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     writeln!(s, "{command}").map_err(|e| e.to_string())?;
     let _ = s.shutdown(std::net::Shutdown::Write);
@@ -567,7 +639,13 @@ pub fn ask(_: &str, _: &str, _: std::time::Duration) -> Result<String, String> {
 pub fn send(scene: Option<&str>, commands: &[String]) -> Result<(), String> {
     use std::io::Write;
     let path = match scene {
-        Some(e) => command_socket_path(e).ok_or("I don't know where the sockets are")?,
+        Some(e) => {
+            let (path, word) = reach(e)?;
+            if let Some(w) = word {
+                eprintln!("{w}");
+            }
+            path
+        }
         None => {
             let dir = command_socket_path("x").and_then(|r| r.parent().map(|p| p.to_owned())).ok_or("I don't know where the sockets are")?;
             let alive: Vec<_> = std::fs::read_dir(&dir).map_err(|_| "there is no scene running")?.filter_map(Result::ok).map(|e| e.path()).filter(|p| std::os::unix::net::UnixStream::connect(p).is_ok()).collect();

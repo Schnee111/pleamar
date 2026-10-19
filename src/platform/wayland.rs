@@ -1540,6 +1540,10 @@ impl PopupHandler for State {
 /// someone closes. It keeps the thread that calls it.
 pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::Instance, to_render: Sender<ToRender>) {
     let connection = Connection::connect_to_env().expect("there is no Wayland session");
+    // Which display, beside its socket: `--say` prefers a scene on the caller's.
+    if let Some(d) = super::display_here() {
+        super::shown_on(d);
+    }
     let (globals, mut events) = registry_queue_init::<State>(&connection).unwrap();
     let qh = events.handle();
     let compositor = CompositorState::bind(&globals, &qh).expect("no wl_compositor");
