@@ -3030,6 +3030,20 @@ pub fn run(
                             send(ToNest::Launch(command));
                         }
                     }
+                    Effect::Text(t, value) => {
+                        let k = t.0 as usize;
+                        let v = match value {
+                            crate::scene::TextValue::Words(w) => w.clone(),
+                            crate::scene::TextValue::Of(o) => texts[o.0 as usize].clone(),
+                        };
+                        // A field being written in keeps its cursor within what it now holds.
+                        if let Some(e) = editing.as_mut().filter(|e| e.field == k) {
+                            e.cursor = e.cursor.min(v.len());
+                            e.anchor = e.anchor.min(v.len());
+                        }
+                        let _ = to_logic.send(Event::Text(scene.texts[k].0, v.clone()));
+                        texts[k] = v;
+                    }
                     Effect::FocusField(t) => {
                         parked = None;
                         editing = t.map(|t| t.0 as usize).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });

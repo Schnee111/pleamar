@@ -1,0 +1,14 @@
+// A rule makes a live text something: words, or what another one says.
+language 0.4
+scene TextFromRule {
+    surface { size: 300, 120 }
+    text draft = ""
+    text label = "unnamed"
+    event keep
+    event clear
+    on keep { label = draft }
+    on clear { label = "" }
+    on submit draft { label = draft }
+    input draft { at: 20, 20; width: 200; size: 14; color: #ffffff; placeholder: "a name" }
+    text label { at: 20, 70; size: 14; color: #ffffff }
+}

@@ -1,0 +1,8 @@
+// expect: error «no text»
+language 0.4
+scene TextFromRuleWrong {
+    surface { size: 300, 120 }
+    text label = "unnamed"
+    event keep
+    on keep { label = nothere }
+}

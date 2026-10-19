@@ -1716,6 +1716,8 @@ pub enum Effect {
     Gesture(GestureId),
     /// Put the text cursor in a field, or take it away.
     FocusField(Option<TextId>),
+    /// A live text becomes that: `name = ""`, `label = draft`.
+    Text(TextId, TextValue),
     /// Something done to a window of the compositor inside the scene: which
     /// one is an expression, `close win(win.focus)`.
     Window(WindowAction, Expr),
@@ -1763,6 +1765,13 @@ pub enum WindowAction {
     /// back into it: one window, not its whole monitor.
     Float,
     Tile,
+}
+
+/// What a rule makes a live text: words as written, or what another says.
+#[derive(Clone, Debug)]
+pub enum TextValue {
+    Words(String),
+    Of(TextId),
 }
 
 impl Effect {

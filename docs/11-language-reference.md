@@ -1387,6 +1387,7 @@ scene Told {
 | `ripple zone` | a ring of light from the centre of that zone through the glass, without a press or a pointer move; nothing if the zone is hidden, inactive or off screen, or with reduced motion. A new ripple replaces the previous one. Naming a shape here makes it a zone, like any rule that names it: it stops the clicks under it |
 | `play gesture` | it asks for it; it will be granted or not, depending on its class |
 | `focus field` · `blur` | gives the writing cursor to an `input`, or takes it away |
+| `text = "words"` · `text = other` | a live text made that at once: words as written (no slots), or what another live text says then. `label = ""` empties it; `label = draft`, after an `input draft`, keeps what was written |
 
 A state change can give the same glass feedback as a click, entirely in the
 renderer. In a workspace tab, for example:

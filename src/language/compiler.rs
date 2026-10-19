@@ -6593,6 +6593,22 @@ impl<'a> Compiler<'a> {
                             }
                         }
                         other if vocab::EFFECTS.contains(&other) => unreachable!("'{other}' is in the vocabulary, but `rule` cannot carry it out"),
+                        // `label = ""` or `label = draft`: a live text, from words or another.
+                        "" if self.texts.contains_key(&self.global(&p)) && matches!(c.peek(), Some(TokenKind::Sym(s)) if *s == "=") => {
+                            let t = self.texts[&self.global(&p)];
+                            c.expect_sym("=")?;
+                            let value = match c.peek() {
+                                Some(TokenKind::Str(_)) => crate::scene::TextValue::Words(c.string()?),
+                                _ => {
+                                    let other = self.global(&c.id("words in quotes or another text")?);
+                                    match self.texts.get(&other) {
+                                        Some(o) => crate::scene::TextValue::Of(*o),
+                                        None => return self.unknown(&c, "no text", &other, self.texts.keys().collect()),
+                                    }
+                                }
+                            };
+                            Effect::Text(t, value)
+                        }
                         _ => {
                             // `open = true`
                             c.i -= 1;
