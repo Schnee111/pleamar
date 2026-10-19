@@ -4,83 +4,163 @@
 use super::SysValue;
 use std::collections::BTreeMap;
 
+/// One `.desktop` file, as the `apps` service reports it.
+#[derive(Debug, Default, PartialEq)]
+struct App {
+    name: String,
+    exec: String,
+    icon: String,
+    id: String,
+    wmclass: String,
+    local_name: String,
+    categories: String,
+    generic_name: String,
+    comment: String,
+    keywords: String,
+    terminal: bool,
+    actions: Vec<Action>,
+}
+
+/// One of its `[Desktop Action <id>]` groups: Firefox's «New Private Window».
+#[derive(Debug, Default, PartialEq)]
+struct Action {
+    id: String,
+    name: String,
+    local_name: String,
+    exec: String,
+    icon: String,
+}
+
 /// The `.desktop` files of every applications folder, without the hidden ones.
 pub fn applications() -> SysValue {
+    SysValue::List(installed().into_iter().map(App::value).collect())
+}
+
+/// The same, in alphabetical order, as `launch` checks against.
+fn installed() -> Vec<App> {
     let home = std::env::var("HOME").unwrap_or_default();
     let data_dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
     let mut folders = vec![format!("{home}/.local/share/applications")];
     folders.extend(data_dirs.split(':').map(|d| format!("{d}/applications")));
-    // By name, and the first folder wins: the user's overrides the system's.
-    // Name → (command, icon, the file's id, the X11 class it says it has,
-    // its name in the user's language, its categories).
-    let mut apps: BTreeMap<String, (String, String, String, String, String, String)> = BTreeMap::new();
     // `es_ES.UTF-8` → `Name[es_ES]`, then `Name[es]`.
     let lang = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|v| std::env::var(v).ok()).find(|v| !v.is_empty()).unwrap_or_default();
     let lang = lang.split(['.', '@']).next().unwrap_or("").to_owned();
-    let short = lang.split('_').next().unwrap_or("").to_owned();
-    let (key_long, key_short) = (format!("Name[{lang}]"), format!("Name[{short}]"));
+    // By name, and the first folder wins: the user's overrides the system's.
+    let mut apps: BTreeMap<String, App> = BTreeMap::new();
     for folder in folders {
         let Ok(dir) = std::fs::read_dir(&folder) else { continue };
         for f in dir.filter_map(Result::ok).filter(|f| f.path().extension().is_some_and(|e| e == "desktop")) {
             let Ok(text) = std::fs::read_to_string(f.path()) else { continue };
-            let (mut name, mut command, mut icon, mut hidden, mut inside) = (None, None, String::new(), false, false);
-            let mut class = String::new();
-            let (mut local_long, mut local_short, mut categories) = (None, None, String::new());
             // `org.gnome.Calculator.desktop` is `org.gnome.Calculator`: the
             // app id its windows say, so a window can be told whose it is.
             let id = f.path().file_stem().and_then(|s| s.to_str()).unwrap_or("").to_owned();
-            for l in text.lines() {
-                if l.starts_with('[') {
-                    inside = l == "[Desktop Entry]";
-                } else if inside {
-                    match l.split_once('=') {
-                        Some(("Name", v)) => name = name.or(Some(v.to_owned())),
-                        Some(("Exec", v)) => command = Some(v.split_whitespace().filter(|p| !p.starts_with('%')).collect::<Vec<_>>().join(" ")),
-                        Some(("Icon", v)) => icon = v.to_owned(),
-                        Some(("StartupWMClass", v)) => class = v.to_owned(),
-                        Some(("Categories", v)) => categories = v.to_owned(),
-                        Some((k, v)) if !lang.is_empty() && k == key_long => local_long = local_long.or(Some(v.to_owned())),
-                        Some((k, v)) if !short.is_empty() && k == key_short => local_short = local_short.or(Some(v.to_owned())),
-                        Some(("NoDisplay" | "Hidden", "true")) => hidden = true,
-                        Some(("Type", v)) if v != "Application" => hidden = true,
-                        _ => {}
-                    }
-                }
-            }
-            if let (Some(n), Some(o), false) = (name, command, hidden) {
-                let local = local_long.or(local_short).unwrap_or_else(|| n.clone());
-                apps.entry(n).or_insert((o, icon, id, class, local, categories));
+            if let Some(a) = parse(&text, &id, &lang) {
+                apps.entry(a.name.clone()).or_insert(a);
             }
         }
     }
-    SysValue::List(
-        apps.into_iter()
-            .map(|(n, (o, i, id, class, local, categories))| {
-                SysValue::Map(vec![
-                    ("name".into(), SysValue::Text(n)),
-                    ("exec".into(), SysValue::Text(o)),
-                    ("icon".into(), SysValue::Text(i)),
-                    ("id".into(), SysValue::Text(id)),
-                    ("wmclass".into(), SysValue::Text(class)),
-                    // `Name[es]`, as the user's language says it (the name itself if it has none).
-                    ("local_name".into(), SysValue::Text(local)),
-                    // `Categories=`, as written: `Utility;Calculator;`.
-                    ("categories".into(), SysValue::Text(categories)),
-                ])
-            })
-            .collect(),
-    )
+    apps.into_values().collect()
+}
+
+/// One file's text, read in the user's language (`es_ES`, or "" for none);
+/// `None` when it is not an application to show.
+fn parse(text: &str, id: &str, lang: &str) -> Option<App> {
+    // Every group's keys, the first of each: `[Desktop Entry]` and the `[Desktop Action <id>]`s.
+    let mut groups: BTreeMap<&str, BTreeMap<&str, &str>> = BTreeMap::new();
+    let mut group = "";
+    for l in text.lines() {
+        let l = l.trim_end();
+        if let Some(g) = l.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            group = g;
+        } else if let Some((k, v)) = l.split_once('=').filter(|_| !l.starts_with('#')) {
+            groups.entry(group).or_default().entry(k.trim_end()).or_insert(v.trim_start());
+        }
+    }
+    let short = lang.split('_').next().unwrap_or("");
+    // `Name[es_ES]`, then `Name[es]`, then `Name`.
+    let local = |g: &BTreeMap<&str, &str>, key: &str| {
+        [format!("{key}[{lang}]"), format!("{key}[{short}]")].iter().filter(|_| !lang.is_empty()).find_map(|k| g.get(k.as_str())).or(g.get(key)).map(|v| v.to_string())
+    };
+    let get = |g: &BTreeMap<&str, &str>, key: &str| g.get(key).map_or(String::new(), |v| v.to_string());
+    let e = groups.get("Desktop Entry")?;
+    if e.get("Type").is_some_and(|t| *t != "Application") || e.get("NoDisplay") == Some(&"true") || e.get("Hidden") == Some(&"true") {
+        return None;
+    }
+    // Only the ones `Actions=` lists, in its order, and only with something to run.
+    let actions = get(e, "Actions")
+        .split(';')
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .filter_map(|a| {
+            let g = groups.get(format!("Desktop Action {a}").as_str())?;
+            Some(Action { id: a.to_owned(), name: g.get("Name")?.to_string(), local_name: local(g, "Name").unwrap_or_default(), exec: command(g.get("Exec")?), icon: get(g, "Icon") })
+        })
+        .collect();
+    Some(App {
+        name: e.get("Name")?.to_string(),
+        exec: command(e.get("Exec")?),
+        icon: get(e, "Icon"),
+        id: id.to_owned(),
+        wmclass: get(e, "StartupWMClass"),
+        local_name: local(e, "Name").unwrap_or_default(),
+        categories: get(e, "Categories"),
+        generic_name: local(e, "GenericName").unwrap_or_default(),
+        comment: local(e, "Comment").unwrap_or_default(),
+        keywords: local(e, "Keywords").unwrap_or_default(),
+        terminal: e.get("Terminal") == Some(&"true"),
+        actions,
+    })
+}
+
+/// `Exec=firefox %u` → `firefox`: the field codes are for a file manager, not for us.
+fn command(exec: &str) -> String {
+    exec.split_whitespace().filter(|p| !p.starts_with('%')).collect::<Vec<_>>().join(" ")
+}
+
+impl App {
+    fn value(self) -> SysValue {
+        let text = |s: String| SysValue::Text(s);
+        SysValue::Map(vec![
+            ("name".into(), text(self.name)),
+            ("exec".into(), text(self.exec)),
+            ("icon".into(), text(self.icon)),
+            ("id".into(), text(self.id)),
+            ("wmclass".into(), text(self.wmclass)),
+            // `Name[es]`, as the user's language says it (the name itself if it has none).
+            ("local_name".into(), text(self.local_name)),
+            // `Categories=`, as written: `Utility;Calculator;`.
+            ("categories".into(), text(self.categories)),
+            // These three in the user's language, like `local_name`, and "" when it has none:
+            // what to search besides the name («Web Browser», `Internet;WWW;Browser;Web;`).
+            ("generic_name".into(), text(self.generic_name)),
+            ("comment".into(), text(self.comment)),
+            ("keywords".into(), text(self.keywords)),
+            // `Terminal=true`: it runs in a terminal (`btop`).
+            ("terminal".into(), SysValue::Bool(self.terminal)),
+            ("actions".into(), SysValue::List(
+                self.actions
+                    .into_iter()
+                    .map(|a| SysValue::Map(vec![
+                        ("id".into(), text(a.id)),
+                        ("name".into(), text(a.name)),
+                        ("local_name".into(), text(a.local_name)),
+                        ("exec".into(), text(a.exec)),
+                        ("icon".into(), text(a.icon)),
+                    ]))
+                    .collect(),
+            )),
+        ])
+    }
 }
 
 /// Launches a command and forgets about it: it is not a child of the logic, and does not die with us.
 ///
-/// Only what really is an installed application: otherwise, `apps.launch`
-/// would be a way to run anything with the permission to "see the apps".
+/// Only what really is an installed application or one of its actions:
+/// otherwise, `apps.launch` would be a way to run anything with the
+/// permission to "see the apps".
 pub fn launch(command: &str) -> Result<(), String> {
     use std::process::{Command, Stdio};
-    let SysValue::List(apps) = applications() else { return Err("I don't know what applications there are".into()) };
-    let known = apps.iter().any(|a| matches!(a, SysValue::Map(m) if m.iter().any(|(k, v)| k == "exec" && matches!(v, SysValue::Text(o) if o == command))));
-    if !known {
+    if !installed().iter().any(|a| a.exec == command || a.actions.iter().any(|x| x.exec == command)) {
         return Err(format!("'{command}' is none of the installed applications: apps.launch only launches what the `apps` service has reported"));
     }
     let mut launch = Command::new("setsid");
@@ -90,4 +170,79 @@ pub fn launch(command: &str) -> Result<(), String> {
         let _ = child.wait();
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FIREFOX: &str = "[Desktop Entry]
+Name=Firefox
+Name[es]=Firefox
+GenericName=Web Browser
+GenericName[es]=Navegador web
+Comment=Browse the World Wide Web
+Keywords=Internet;WWW;Browser;Web;
+Exec=/usr/lib/firefox/firefox %u
+Icon=firefox
+Type=Application
+Categories=Network;WebBrowser;
+Actions=new-window;new-private-window;
+
+[Desktop Action new-private-window]
+Name=New Private Window
+Name[es]=Nueva ventana privada
+Exec=/usr/lib/firefox/firefox --private-window %u
+
+[Desktop Action new-window]
+Name=New Window
+Exec=/usr/lib/firefox/firefox --new-window %u
+
+[Desktop Action profile-manager]
+Name=Profile Manager
+Exec=/usr/lib/firefox/firefox --ProfileManager
+";
+
+    #[test]
+    fn an_entry_says_what_to_search_in_the_users_language() {
+        let a = parse(FIREFOX, "firefox", "es_ES").unwrap();
+        assert_eq!((a.name.as_str(), a.exec.as_str(), a.local_name.as_str()), ("Firefox", "/usr/lib/firefox/firefox", "Firefox"));
+        // In the user's language where it has one, and the plain key where it does not.
+        assert_eq!((a.generic_name.as_str(), a.comment.as_str(), a.keywords.as_str()), ("Navegador web", "Browse the World Wide Web", "Internet;WWW;Browser;Web;"));
+        assert_eq!(parse(FIREFOX, "firefox", "").unwrap().generic_name, "Web Browser");
+    }
+
+    #[test]
+    fn an_entry_brings_the_actions_it_lists_in_that_order() {
+        let a = parse(FIREFOX, "firefox", "es_ES").unwrap();
+        // A group `Actions=` does not list is not one.
+        let ids: Vec<_> = a.actions.iter().map(|x| (x.id.as_str(), x.local_name.as_str(), x.exec.as_str())).collect();
+        assert_eq!(ids, [("new-window", "New Window", "/usr/lib/firefox/firefox --new-window"), ("new-private-window", "Nueva ventana privada", "/usr/lib/firefox/firefox --private-window")]);
+        assert_eq!(parse(FIREFOX, "firefox", "").unwrap().actions[1].local_name, "New Private Window");
+    }
+
+    #[test]
+    fn a_terminal_entry_says_so() {
+        assert!(!parse(FIREFOX, "firefox", "").unwrap().terminal);
+        let btop = parse("[Desktop Entry]\nType=Application\nName=btop++\nExec=btop\nTerminal=true\n", "btop", "").unwrap();
+        assert!(btop.terminal && btop.actions.is_empty() && btop.keywords.is_empty());
+    }
+
+    #[test]
+    fn a_hidden_entry_or_a_link_is_no_app() {
+        assert_eq!(parse("[Desktop Entry]\nName=Hidden\nExec=x\nNoDisplay=true\n", "x", ""), None);
+        assert_eq!(parse("[Desktop Entry]\nName=A link\nType=Link\nURL=https://example.org\n", "x", ""), None);
+    }
+
+    #[test]
+    fn a_header_with_spaces_after_it_still_starts_its_group() {
+        let a = parse("[Desktop Entry]\nName=A\nExec=a\nActions=b;\n[Desktop Action b] \nName=B\nExec=a --b\n", "a", "").unwrap();
+        assert_eq!((a.exec.as_str(), a.actions.len()), ("a", 1));
+    }
+
+    #[test]
+    fn spaces_in_the_actions_list_do_not_lose_one() {
+        let a = parse("[Desktop Entry]\nName=A\nExec=a\nActions=b; c;\n[Desktop Action b]\nName=B\nExec=a --b\n[Desktop Action c]\nName=C\nExec=a --c\n", "a", "").unwrap();
+        assert_eq!(a.actions.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["b", "c"]);
+    }
 }
