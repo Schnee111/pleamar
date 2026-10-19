@@ -689,6 +689,7 @@ pub fn run(
         let mut key_presses: Vec<(String, Option<String>, Mods, u32)> = Vec::new();
         let mut key_releases: Vec<(String, u32)> = Vec::new();
         let mut focus_changes: Vec<bool> = Vec::new();
+        let mut focus_asked = false;
         let mut drops: Vec<(String, String)> = Vec::new();
         // `drag.over` going back to 0 in the same round a drop arrives: after
         // it, so the zones only there while something is over receive it.
@@ -1734,6 +1735,8 @@ pub fn run(
                     parked = None;
                     editing = name.and_then(|n| scene.texts.iter().position(|t| t.0 == n)).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
                     last_key = Instant::now();
+                    // Lent or not once this round's focus changes are in (below).
+                    focus_asked = editing.is_some();
                 }
                 ToRender::Dropped(kind, data) => drops.push((kind, data)),
                 ToRender::Repaint => {
@@ -2038,6 +2041,14 @@ pub fn run(
                 parked = editing.take().or(parked.take());
                 repeat = None;
             }
+        }
+        // A field focused from the logic (`focus("query")`) or from outside
+        // (`--say … focus`) asks for the keyboard as a rule's `focus` does (see
+        // `Effect::FocusField`): without the loan, the cursor showed and what was
+        // typed went to another window. After the focus changes, as the rule
+        // sees them: a gain arriving in the same round needs no loan.
+        if focus_asked && !have_keyboard && scene.surface().keyboard == Keyboard::OnDemand {
+            keyboard_lent = Some(last_key);
         }
 
         if let Some(d) = block {
