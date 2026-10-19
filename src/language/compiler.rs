@@ -6563,7 +6563,7 @@ impl<'a> Compiler<'a> {
                             }
                             let k = self.expr(&mut c)?;
                             let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
-                            // `… with drop`, `… pin`, `… unpin`, `… close`.
+                            // `… with drop`, `… pin`, `… unpin`, `… close`, `… new`, `… hide`.
                             let what = if c.word("with") {
                                 c.expect_word("drop")?;
                                 DockAction::OpenDrop
@@ -6573,6 +6573,10 @@ impl<'a> Compiler<'a> {
                                 DockAction::Unpin
                             } else if c.word("close") {
                                 DockAction::Close
+                            } else if c.word("new") {
+                                DockAction::New
+                            } else if c.word("hide") {
+                                DockAction::Hide
                             } else {
                                 DockAction::Go
                             };

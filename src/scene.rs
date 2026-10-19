@@ -2291,6 +2291,11 @@ pub enum DockAction {
     Unpin,
     /// Its windows there, asked to close.
     Close,
+    /// Its program started again, for another window, whether it has
+    /// windows or not (a dock menu's «New window»).
+    New,
+    /// Its windows there, put away.
+    Hide,
 }
 
 /// How many items a monitor's dock has at most.

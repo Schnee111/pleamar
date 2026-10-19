@@ -2929,7 +2929,11 @@ pub fn run(
                                     for w in &mine {
                                         send(ToNest::Close(*w));
                                     }
-                                } else if mine.is_empty() {
+                                } else if what == crate::scene::DockAction::Hide {
+                                    for w in mine.iter().filter(|w| !desks.minimized[**w]) {
+                                        send(ToNest::Minimize(*w, true));
+                                    }
+                                } else if what == crate::scene::DockAction::New || mine.is_empty() {
                                     if !item.exec.is_empty() {
                                         send(ToNest::Launch(item.exec.clone()));
                                     }
