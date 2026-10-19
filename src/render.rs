@@ -484,6 +484,8 @@ pub fn run(
     // never waited for); and those that skipped a round waiting, to paint as
     // soon as theirs arrives. See where they are painted.
     let mut in_flight: Vec<(u32, Instant)> = Vec::new();
+    // The surfaces that answered a frame since the last round (see `Sheet::unseen`).
+    let mut seen_again: Vec<u32> = Vec::new();
     let mut answers: Vec<u32> = Vec::new();
     let mut owed: Vec<u32> = Vec::new();
     let mut missed_notices = 0u32;
@@ -737,6 +739,9 @@ pub fn run(
                     Ok(ToRender::Frame(id)) if owed.contains(&id) => incoming.push(ToRender::Frame(id)),
                     Ok(ToRender::Frame(id)) => {
                         frame_ready |= frame_requested == Some(id);
+                        if !seen_again.contains(&id) {
+                            seen_again.push(id);
+                        }
                         in_flight.retain(|f| f.0 != id);
                         if !answers.contains(&id) {
                             answers.push(id);
@@ -1076,6 +1081,9 @@ pub fn run(
                 ToRender::Frame(id) => {
                     if frame_requested == Some(id) {
                         frame_ready = true;
+                    }
+                    if !seen_again.contains(&id) {
+                        seen_again.push(id);
                     }
                     in_flight.retain(|f| f.0 != id);
                     if !answers.contains(&id) {
@@ -4169,6 +4177,14 @@ pub fn run(
             }
             l.open = is_open;
         }
+        // A surface the compositor shows again (it answered a frame) may set
+        // the pace again.
+        for id in seen_again.drain(..) {
+            if let Some(l) = sheets.iter_mut().find(|l| l.id == id && l.unseen) {
+                l.unseen = false;
+                open_changed = true;
+            }
+        }
         if open_changed {
             assign_pace(g, &mut sheets, size, op.no_vsync);
             sheets.sort_by_key(|l| l.drives_pace);
@@ -4229,6 +4245,9 @@ pub fn run(
                                 // next round, that wait would not see it and would run out.
                                 Ok(ToRender::Frame(k)) => {
                                     frame_ready |= frame_requested == Some(k);
+                                    if !seen_again.contains(&k) {
+                                        seen_again.push(k);
+                                    }
                                     in_flight.retain(|f| f.0 != k);
                                 }
                                 Ok(m) => held_back.push(m),
@@ -4254,13 +4273,30 @@ pub fn run(
                         if left.is_zero() {
                             missed_notices += 1;
                             if missed_notices == 3 {
-                                println!("render · the compositor is not showing this surface: painting once a second until it shows it again");
+                                // Another open surface still shown takes the pace;
+                                // only with none is the scene painted once a second.
+                                if let Some(l) = sheets.iter_mut().find(|l| l.id == id) {
+                                    l.unseen = true;
+                                }
+                                assign_pace(g, &mut sheets, size, op.no_vsync);
+                                sheets.sort_by_key(|l| l.drives_pace);
+                                // (Only to one that is shown: with none, the one at a
+                                // second, not each in turn.)
+                                if sheets.iter().any(|l| l.view.popup.is_none() && l.open && !l.unseen) {
+                                    println!("render · the compositor is not showing a surface: another one sets the pace until it shows it again");
+                                    missed_notices = 0;
+                                } else {
+                                    println!("render · the compositor is not showing this surface: painting once a second until it shows it again");
+                                }
                             }
                             break;
                         }
                         match rx.recv_timeout(left) {
                             Ok(ToRender::Frame(k)) => {
                                 frame_ready |= k == id;
+                                if !seen_again.contains(&k) {
+                                    seen_again.push(k);
+                                }
                                 in_flight.retain(|f| f.0 != k);
                             }
                             Ok(m) => held_back.push(m),
@@ -4843,8 +4879,12 @@ fn assign_pace(g: &Gpu, sheets: &mut [Sheet], size: (f32, f32), no_vsync: bool) 
     // A popup never sets the pace: it comes and goes, and it may be covered.
     // Nor a closed one. And between equals, the first: `max_by_key` keeps the
     // last, which with two surfaces at 60 Hz was the corner one, closed.
+    // Nor one the compositor stopped showing (`unseen`), while another open
+    // one is shown: waiting on its frames, the whole scene went at one a
+    // second, the one on screen too.
+    let shown = sheets.iter().any(|l| l.view.popup.is_none() && l.open && !l.unseen);
     let mut fastest: Option<(i32, _)> = None;
-    for l in sheets.iter().filter(|l| l.view.popup.is_none() && l.open) {
+    for l in sheets.iter().filter(|l| l.view.popup.is_none() && l.open && (!l.unseen || !shown)) {
         if fastest.is_none_or(|(mhz, _)| l.mhz > mhz) {
             fastest = Some((l.mhz, l.id));
         }
