@@ -707,7 +707,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn cursor(&self, c: Cursor) {
         let shape = shape_of(c);
-        CURSOR_SHAPE.store(c as u8, Ordering::Relaxed);
+        CURSOR_SHAPE.store(c.code(), Ordering::Relaxed);
         if let Some(d) = self.cursors.lock().unwrap().as_ref() {
             d.set_shape(self.serial.load(Ordering::Relaxed), shape);
         }
@@ -734,6 +734,8 @@ fn shape_of(c: Cursor) -> Shape {
         Cursor::Move => Shape::Move,
         Cursor::NotAllowed => Shape::NotAllowed,
         Cursor::Crosshair => Shape::Crosshair,
+        // the protocol numbers its shapes in the order of the names, from 1
+        Cursor::Named(i) => Shape::try_from(i as u32 + 1).unwrap_or(Shape::Default),
     }
 }
 
@@ -1822,20 +1824,7 @@ impl PointerHandler for State {
                     if let PointerEventKind::Enter { serial } = e.kind {
                         self.serial.store(serial, Ordering::Relaxed);
                         if let Some(d) = self.cursors.lock().unwrap().as_ref() {
-                            let c = match CURSOR_SHAPE.load(Ordering::Relaxed) {
-                                1 => Cursor::Hand,
-                                2 => Cursor::Text,
-                                3 => Cursor::Grab,
-                                4 => Cursor::Grabbing,
-                                5 => Cursor::EwResize,
-                                6 => Cursor::NsResize,
-                                7 => Cursor::NwseResize,
-                                8 => Cursor::NeswResize,
-                                9 => Cursor::Move,
-                                10 => Cursor::NotAllowed,
-                                11 => Cursor::Crosshair,
-                                _ => Cursor::Normal,
-                            };
+                            let c = Cursor::from_code(CURSOR_SHAPE.load(Ordering::Relaxed));
                             d.set_shape(serial, shape_of(c));
                         }
                     }
