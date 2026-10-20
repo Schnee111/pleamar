@@ -615,7 +615,7 @@ body {
 }
 ```
 
-**And how it is made is yours.** Eight things go next to `glass` —on a body, a
+**And how it is made is yours.** Twelve things go next to `glass` —on a body, a
 loose shape or the `fill` of a layout—, all of them expressions, so they can
 follow a fact, a spring or the pointer:
 
@@ -629,6 +629,10 @@ follow a fact, a spring or the pointer:
 | `frost: 100%` | how frosted it is inside its bevel. `0` is clear glass: what is behind seen as it is, bent only at the edge. `auto` is frosted only where what is behind is busy —words, a window— and clear over a wallpaper, so the words behind never fight the ones on it |
 | `smoke: 0%` | smoked glass: what is seen through it is taken down, the brighter the more —a white page to about 40 %, a dark one barely—, its colour kept, so light words on it read over anything |
 | `milk: 0%` | milky glass: what is seen through it is lifted towards white, the darker the more, so dark words on it read over anything. Both are numbers, so a light and a dark look can go from one to the other: `smoke: dk; milk: 1 - dk` |
+| `tint: 22%` | how much of its own `color` is laid over what is seen through it, and (scaled with it) the extra over something bright or busy that keeps words on it readable. `0` shows what is behind as the blur left it |
+| `vivid: 118%` | the saturation of what is seen through it: `100%` as it is |
+| `mirror: 100%` | how much its rim mirrors what is around the glass (Fresnel). `0` none |
+| `highlight: 100%` | how bright the light caught on its rim is (`shine:` says where it comes from). `0` none |
 
 `frost`, `smoke` and `milk` belong to the glass that bends (`lens`): where
 the compositor blurs instead, `frost` has no say in how much, and smoke and
@@ -870,6 +874,53 @@ on a compositor that does not let the screen be captured, it is always unknown. 
 the first capture of its box arrives it is unknown too, and nothing is put in
 its place: a glass with a lens is blurred by the compositor meanwhile, a shader
 draws what it draws with what it knows.
+
+**The frosting: `blur`.** What a glass shows through it, and what
+`behind_frosted` reads, is frosted by a chain of passes the scene can write
+itself, in WGSL as well. Without one it gets the frosting pleamar always had: a
+gaussian at half size, across and then down.
+
+```
+blur = file "shaders/blur.wgsl" {
+    passes: down 0.5 repeat 4, up 2 repeat 3, grade 1
+    values: radius, 0.02
+    reach: 32
+}
+```
+
+```wgsl
+fn down(s: Blur) -> vec4<f32> {
+    let o = s.a.x / s.source;
+    return (prev(s, s.uv + o) + prev(s, s.uv - o) + prev(s, s.uv + vec2(o.x, -o.y)) + prev(s, s.uv - vec2(o.x, -o.y))) * 0.25;
+}
+```
+
+Each pass names a function of the file, `fn down(s: Blur) -> vec4<f32>`, and
+how big its picture is next to the one before (the first, next to what is
+behind): `0.5` halves it, `2` doubles it, `1` keeps it, up to `4`. `repeat n`
+runs it n times in a row, and `keep k` (0 to 3) keeps the picture the pass ends
+with, for any later pass to read. What the last pass leaves is what the glass
+shows. The pictures are 16-bit floats, in premultiplied alpha. The order and
+the sizes are said in the scene because they have to be known before a frame
+is drawn; only the colour of each pixel is the shader's. What it receives, in
+`s`:
+
+| | |
+| --- | --- |
+| `s.pos` · `s.size` · `s.uv` | the pixel, in real pixels of this pass's picture; the size of that picture; and the two divided (0 to 1) |
+| `s.source` | the size of the picture before, which `prev` reads |
+| `s.scale` | real pixels per logical pixel |
+| `s.index` · `s.count` | which run of a `repeat` this is (from 0), and how many there are |
+| `s.step` | which pass of the whole chain this is (from 0) |
+| `s.a` · `s.b` | the eight `values:`, four and four: expressions like any other, worked out every frame |
+| `prev(s, uv)` · `input(s, uv)` · `kept(s, k, uv)` | the picture of the pass before, the sharp backdrop, and what a pass kept with `keep k` |
+
+`reach:` is how far the frosting reaches past a glass, in logical pixels: how
+much of what is around it is captured with it (22 without a `blur`). It is
+checked when the scene is read, with the file and the line of the mistake: a
+pass that names a function the file does not have, one that is not exactly
+`fn name(s: Blur) -> vec4<f32>`, or a size out of range is an error. A scene has
+one `blur`.
 
 **`z:` — what goes on top.** Groups with `z:` that are side by side (in the
 same group, or loose in the scene, even from different iterations of a
@@ -1561,17 +1612,18 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 
 ```vocabulary
 language: 0.4
-statements: surface permissions model service spring prop pose fact event text image figure font shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
+statements: surface permissions model service spring prop pose fact event text image figure font shader blur particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
 library: let spring component permissions fact text model service event image figure font shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title app_id rate captures agent
 properties.permissions: run services
-properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple frost smoke milk active show cursor carries carry_icon grow label agent role value checked selected handle
+properties.blur: passes values reach
+properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight active show cursor carries carry_icon grow label agent role value checked selected handle
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
 properties.line: from to width
 properties.path: at size
-properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk opacity show
+properties.body: color gradient rim light shadow border glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight opacity show
 properties.text: at anchor width size weight color opacity lines align line_height family measure show grow gradient outline shadow letter_move letter_opacity letter_scale selectable selection markdown
 properties.image: at size opacity tint cell show grow
 properties.window: at size ask opacity show
@@ -1583,7 +1635,7 @@ properties.group: pivot rotate scale move opacity size show z grow span blur glo
 properties.popup: at size open
 properties.children: move
 properties.grid: at columns gap width row show opacity
-properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple frost smoke milk corner show opacity cursor view step content wrap size grow
+properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple frost smoke milk tint vivid mirror highlight corner show opacity cursor view step content wrap size grow
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
@@ -1595,7 +1647,7 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure font particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
+documented: translations surface permissions model service spring prop pose fact event text image figure font particles shader blur measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look ripple gesture posture import scene library include part language
 services: clock clock.seconds audio battery brightness network bluetooth media window thumbnails workspaces apps tray notifications notification_history polkit
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
