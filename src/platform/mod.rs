@@ -310,12 +310,14 @@ pub fn relayer(which: usize, level: crate::scene::Level) {
 /// A surface keeps more or less room for itself while running: `reserve: n while …`.
 /// Something dragged out of the scene (a zone with `carries:`), from the
 /// press that began it: whether a drag could start.
-pub fn start_drag(text: &str) -> bool {
+///
+/// `icon`: the path of a PNG that goes under the pointer while it lasts (`carry_icon:`).
+pub fn start_drag(text: &str, icon: Option<&str>) -> bool {
     #[cfg(target_os = "linux")]
     if LAYER_HOOKS.get().is_none() {
-        return wayland::start_drag(text);
+        return wayland::start_drag(text, icon);
     }
-    let _ = text;
+    let _ = (text, icon);
     false
 }
 

@@ -2282,7 +2282,8 @@ pub fn run(
                 if carry_tried != Some(k) && (p.0 - from.0).hypot(p.1 - from.1) > 8.0 {
                     carry_tried = Some(k);
                     let text = crate::gpu::content_text(content, Ctx { props: &props, facts: &facts, seen: None }, &texts).into_owned();
-                    if crate::platform::start_drag(&text) {
+                    let icon = scene.zones.get(k).and_then(|z| z.carry_icon.as_ref()).map(|c| crate::gpu::content_text(c, Ctx { props: &props, facts: &facts, seen: None }, &texts).into_owned());
+                    if crate::platform::start_drag(&text, icon.as_deref().filter(|p| !p.is_empty())) {
                         let _ = to_logic.send(Event::Release(scene.zones[k].id));
                         drag = None;
                         carried_now = Some(k);
