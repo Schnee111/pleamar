@@ -517,7 +517,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `size: w, h` · `view: w, h` · `step` · `content` · `wrap: n` |
 | `grid` | `at` · `columns` · `width` · `gap` · `row` (the height of every row) · `show` · `opacity`; and on its children, `span`. What it is: below |
 
-`anchor` of a text: `left` `center` `right` and `top` `center` `bottom`, one or both (`anchor: left center`). Of a layout: `left` `center` `right` and `top` `middle` `bottom` —with no anchor, `at` is its top left corner—. `cursor:` `default` `pointer` `text` `grab` `grabbing`, and for stretching and carrying `ew_resize` `ns_resize` `nwse_resize` `nesw_resize` `move`, `not_allowed`, `crosshair`.
+`anchor` of a text: `left` `center` `right` and `top` `center` `bottom`, one or both (`anchor: left center`). Of a layout: `left` `center` `right` and `top` `middle` `bottom` —with no anchor, `at` is its top left corner—. `cursor:` `default` `pointer` `text` `grab` `grabbing`, and for stretching and carrying `ew_resize` `ns_resize` `nwse_resize` `nesw_resize` `move`, `not_allowed`, `crosshair`; and any other standard one, with `_` between its words (`help`, `progress`, `wait`, `context_menu`, `zoom_in`, `col_resize`…: the cursor-shape protocol's list).
 
 **A text's `size:` and `weight:`, and a body's `rim:`, are expressions** like
 its `at:` and its `opacity:`: `size: 21 * u` is 21 times `u`, `size: 12 + 4 * lane`
@@ -1616,7 +1616,7 @@ services.polkit: ready pending asking message action icon user prompt secret inf
 parameter_types: number bool color text record event image gesture spring
 springs: lively calm quick slow gentle pose
 units: px % deg ms s
-cursors: default pointer text grab grabbing ew_resize ns_resize nwse_resize nesw_resize move not_allowed crosshair
+cursors: default pointer text grab grabbing ew_resize ns_resize nwse_resize nesw_resize move not_allowed crosshair context_menu help progress wait cell vertical_text alias copy no_drop e_resize n_resize ne_resize nw_resize s_resize se_resize sw_resize w_resize col_resize row_resize all_scroll zoom_in zoom_out dnd_ask all_resize
 surface.anchor: top bottom left right top_left top_right bottom_left bottom_right center
 surface.level: background bottom top overlay
 surface.kind: panel window lock

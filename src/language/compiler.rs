@@ -6875,21 +6875,8 @@ fn reach(c: &mut Cur) -> R<Reach> {
 }
 
 fn read_cursor(c: &mut Cur) -> R<Cursor> {
-    Ok(match c.one_of(vocab::CURSORS, "a cursor")?.as_str() {
-        "default" => Cursor::Normal,
-        "pointer" => Cursor::Hand,
-        "text" => Cursor::Text,
-        "grab" => Cursor::Grab,
-        "grabbing" => Cursor::Grabbing,
-        "ew_resize" => Cursor::EwResize,
-        "ns_resize" => Cursor::NsResize,
-        "nwse_resize" => Cursor::NwseResize,
-        "nesw_resize" => Cursor::NeswResize,
-        "move" => Cursor::Move,
-        "not_allowed" => Cursor::NotAllowed,
-        "crosshair" => Cursor::Crosshair,
-        _ => unreachable!(),
-    })
+    let name = c.one_of(vocab::CURSORS, "a cursor")?;
+    Ok(Cursor::from_name(&name).unwrap_or_default())
 }
 
 struct ParsedShape {

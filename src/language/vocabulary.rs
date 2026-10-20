@@ -155,7 +155,11 @@ pub const MODEL_TYPES: &[&str] = &["list"];
 pub const PARAMETER_TYPES: &[&str] = &["number", "bool", "color", "text", "record", "event", "image", "gesture", "spring"];
 pub const SPRINGS: &[&str] = &["lively", "calm", "quick", "slow", "gentle", "pose"];
 pub const UNITS: &[&str] = &["px", "%", "deg", "ms", "s"];
-pub const CURSORS: &[&str] = &["default", "pointer", "text", "grab", "grabbing", "ew_resize", "ns_resize", "nwse_resize", "nesw_resize", "move", "not_allowed", "crosshair"];
+pub const CURSORS: &[&str] = &[
+    "default", "pointer", "text", "grab", "grabbing", "ew_resize", "ns_resize", "nwse_resize", "nesw_resize", "move", "not_allowed", "crosshair", "context_menu", "help", "progress", "wait", "cell",
+    "vertical_text", "alias", "copy", "no_drop", "e_resize", "n_resize", "ne_resize", "nw_resize", "s_resize", "se_resize", "sw_resize", "w_resize", "col_resize", "row_resize", "all_scroll", "zoom_in",
+    "zoom_out", "dnd_ask", "all_resize",
+];
 pub const SURFACE_ANCHORS: &[&str] = &["top", "bottom", "left", "right", "top_left", "top_right", "bottom_left", "bottom_right", "center"];
 pub const LEVELS: &[&str] = &["background", "bottom", "top", "overlay"];
 /// Which kind of window a surface asks for: stuck to an edge, or a normal one.
