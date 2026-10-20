@@ -813,6 +813,15 @@ pub struct Glass {
     /// `milk:` milky glass, which lifts what is seen through it, the darker the
     /// more, so dark words on it read (0 = none).
     pub milk: Expr,
+    /// `tint:` how much of its own colour is laid over what is seen through
+    /// it (22 %), and more over something bright or busy, so words on it read.
+    pub tint: Expr,
+    /// `vivid:` the saturation of what is seen through it (118 %; 100 % as it is).
+    pub vivid: Expr,
+    /// `mirror:` how much its rim mirrors what is around it (100 %; 0 none).
+    pub mirror: Expr,
+    /// `highlight:` how bright the light caught on its rim is (100 %; 0 none).
+    pub highlight: Expr,
 }
 
 /// A vertical gradient of lightness, so the body is not flat.
@@ -1848,6 +1857,10 @@ pub struct Scene {
     /// Its own shaders, already checked: `shader aurora = file "aurora.wgsl"`.
     /// Their number is their place here.
     pub shaders: Vec<crate::shaders::UserShader>,
+    /// Its own blur, `blur = file "blur.wgsl" { passes: ... }`, already checked,
+    /// and the numbers it is given (`values:`). Without one, the default.
+    pub blur: Option<crate::blur::Plan>,
+    pub blur_values: Vec<Expr>,
     /// `keyboard: exclusive while open`: when it wants the keyboard.
     pub keyboard_while: Option<Expr>,
     pub permissions: Permissions,

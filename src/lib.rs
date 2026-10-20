@@ -12,6 +12,7 @@ pub mod scene;
 mod scenes;
 mod skill;
 mod shaders;
+mod blur;
 mod shapes;
 mod lsp;
 mod luau_types;

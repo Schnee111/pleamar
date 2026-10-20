@@ -79,33 +79,3 @@ fn own_over(e: VertexOut) -> @location(0) vec4<f32> {
     return ours + (1.0 - ours.a) * vec4<f32>(behind.rgb * behind.a, behind.a);
 }
 
-// ── blur ──────────────────────────────────────────────────────────
-// Separable gaussian: one pass horizontally and another vertically, at half
-// resolution (the frosting needs no more, and it costs a quarter). It is read
-// proportionally, so the first pass, from full resolution to half, also
-// downscales. What is unknown has alpha 0 and weighs nothing: the result is in
-// premultiplied alpha, and whoever reads it divides by the alpha.
-struct Blur {
-    direction: vec2<f32>, // (1, 0) or (0, 1), in pixels of the destination
-    sigma: f32,           // in pixels of the destination
-    _r: f32,
-    dest_size: vec2<f32>, // the size of the destination, in pixels
-    _s: vec2<f32>,
-};
-@group(0) @binding(0) var source: texture_2d<f32>;
-@group(0) @binding(1) var<uniform> b: Blur;
-@group(0) @binding(2) var soft_sampler: sampler;
-
-@fragment
-fn blur(e: VertexOut) -> @location(0) vec4<f32> {
-    let radius = i32(ceil(b.sigma * 2.5));
-    var total = vec4<f32>(0.0);
-    var weight = 0.0;
-    for (var k = -radius; k <= radius; k++) {
-        let w = exp(-f32(k * k) / (2.0 * b.sigma * b.sigma));
-        let q = (e.pos.xy + b.direction * f32(k)) / b.dest_size;
-        total += textureSampleLevel(source, soft_sampler, q, 0.0) * w;
-        weight += w;
-    }
-    return total / weight;
-}
