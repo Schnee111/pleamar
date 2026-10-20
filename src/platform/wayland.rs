@@ -2254,9 +2254,13 @@ fn icon_dirs_in(home: &str, data_home: &str, data_dirs: &str, config: &str) -> V
     let mut shares = vec![PathBuf::from(data_home)];
     shares.extend(data_dirs.split(':').filter(|d| !d.is_empty()).map(PathBuf::from));
     shares.push("/usr/share".into());
+    // A folder listed twice is looked at once, where it came first.
+    let mut seen = std::collections::HashSet::new();
+    shares.retain(|s| seen.insert(s.clone()));
     let mut bases = vec![PathBuf::from(data_home).join("icons"), PathBuf::from(format!("{home}/.icons"))];
     bases.extend(shares.iter().map(|s| s.join("icons")));
-    bases.dedup();
+    let mut seen = std::collections::HashSet::new();
+    bases.retain(|b| seen.insert(b.clone()));
     let index = |theme: &str| bases.iter().map(|b| b.join(theme).join("index.theme")).find(|p| p.is_file()).and_then(|p| std::fs::read_to_string(p).ok());
     let key = |text: &str, section: &str, key: &str| -> Option<String> {
         let mut inside = false;
@@ -2368,6 +2372,24 @@ mod tests {
                 "system/icons/hicolor/48x48/apps",
             ]
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A folder that comes up twice (the data home also in XDG_DATA_DIRS,
+    /// /usr/share also at the end) is walked once.
+    #[test]
+    fn no_icon_folder_comes_twice() {
+        let root = std::env::temp_dir().join(format!("pleamar-icons-twice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (home, data_home, config) = (root.join("home"), root.join("data"), root.join("config"));
+        file(&data_home.join("icons/hicolor/48x48/apps/a.png"), "");
+        file(&data_home.join("pixmaps/b.png"), "");
+        let data_dirs = format!("{0}:/usr/share:{0}:/usr/share", data_home.display());
+        let dirs = icon_dirs_in(home.to_str().unwrap(), data_home.to_str().unwrap(), &data_dirs, config.to_str().unwrap());
+        let mut seen = std::collections::HashSet::new();
+        assert!(dirs.iter().all(|d| seen.insert(d)), "{dirs:?}");
+        assert!(dirs.contains(&data_home.join("icons/hicolor/48x48/apps")));
+        assert!(dirs.contains(&data_home.join("pixmaps")));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
