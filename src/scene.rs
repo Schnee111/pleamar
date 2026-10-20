@@ -2720,7 +2720,7 @@ mod tests {
 
     #[test]
     fn constants_fold_on_read() {
-        assert!(matches!((Expr::K(2.0) * 3.0 + 1.0), Expr::K(7.0)));
+        assert!(matches!(Expr::K(2.0) * 3.0 + 1.0, Expr::K(7.0)));
         assert!(matches!(Expr::K(0.0) - Expr::K(4.0), Expr::K(-4.0)));
         assert!(matches!(PropId(0) * 1.0, Expr::P(_)));
         assert!(matches!(PropId(0) + 0.0, Expr::P(_)));
